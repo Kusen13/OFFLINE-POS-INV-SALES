@@ -544,11 +544,13 @@ export function POSPage() {
       </div>
 
       {/* Category tabs */}
-      <div className="flex gap-2 px-4 py-2 overflow-x-auto no-scrollbar">
+      <div className="flex items-center gap-2 px-4 py-2.5 overflow-x-auto no-scrollbar">
         <button
           onClick={() => setActiveCategory(null)}
-          className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
-            activeCategory === null ? 'bg-primary-600 text-white' : 'bg-surface-800 text-surface-300 hover:bg-surface-700'
+          className={`shrink-0 px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-all active:scale-95 ${
+            activeCategory === null
+              ? 'bg-primary-600 text-white shadow-md shadow-primary-600/30 border border-primary-500'
+              : 'bg-surface-800/90 text-surface-300 hover:text-surface-100 hover:bg-surface-700 border border-surface-700/60'
           }`}
         >
           All
@@ -557,8 +559,10 @@ export function POSPage() {
           <button
             key={cat.id}
             onClick={() => setActiveCategory(cat.id)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
-              activeCategory === cat.id ? 'bg-primary-600 text-white' : 'bg-surface-800 text-surface-300 hover:bg-surface-700'
+            className={`shrink-0 px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-all active:scale-95 ${
+              activeCategory === cat.id
+                ? 'bg-primary-600 text-white shadow-md shadow-primary-600/30 border border-primary-500'
+                : 'bg-surface-800/90 text-surface-300 hover:text-surface-100 hover:bg-surface-700 border border-surface-700/60'
             }`}
           >
             {cat.name}
@@ -615,7 +619,7 @@ export function POSPage() {
                 <button
                   key={product.id}
                   onClick={() => addItem(product)}
-                  className={`relative bg-surface-800/70 rounded-xl p-3 border text-left transition-all active:scale-[0.97] hover:border-primary-500/50 ${
+                  className={`relative bg-surface-800/70 rounded-xl p-3.5 border text-left transition-all active:scale-[0.97] hover:border-primary-500/50 flex flex-col justify-between min-h-[96px] ${
                     inCart > 0 ? 'border-primary-500/40 bg-primary-500/5' : 'border-surface-700/50'
                   }`}
                 >
@@ -626,13 +630,17 @@ export function POSPage() {
                     </div>
                   )}
 
-                  <p className="text-surface-100 font-medium text-sm leading-tight line-clamp-2">{product.name}</p>
-                  <p className="text-primary-400 font-bold text-sm mt-2">{formatCurrency(product.selling_price)}</p>
-                  {product.current_stock <= product.low_stock_threshold && (
-                    <p className={`text-xs mt-1 ${product.current_stock === 0 ? 'text-danger-500' : 'text-warning-500'}`}>
-                      {product.current_stock === 0 ? 'Out of stock' : `${product.current_stock} left`}
-                    </p>
-                  )}
+                  <div>
+                    <p className="text-surface-100 font-semibold text-sm leading-snug line-clamp-2">{product.name}</p>
+                  </div>
+                  <div className="mt-2.5">
+                    <p className="text-primary-400 font-bold text-sm">{formatCurrency(product.selling_price)}</p>
+                    {product.current_stock <= product.low_stock_threshold && (
+                      <p className={`text-xs mt-0.5 ${product.current_stock === 0 ? 'text-danger-500 font-medium' : 'text-warning-500'}`}>
+                        {product.current_stock === 0 ? 'Out of stock' : `${product.current_stock} left`}
+                      </p>
+                    )}
+                  </div>
                 </button>
               );
             })}
