@@ -12,11 +12,33 @@ import type { PaymentMethod } from '../types/sale';
 export async function replaceAllProducts(products: Product[]): Promise<void> {
   const db = await getDB();
   const tx = db.transaction('products', 'readwrite');
+  const allCurrent = await tx.store.getAll();
+  const pendingOffline = allCurrent.filter(p => p.id < 0 || (p as any).is_pending);
+
   await tx.store.clear();
   for (const product of products) {
     await tx.store.put(product);
   }
+  for (const pending of pendingOffline) {
+    await tx.store.put(pending);
+  }
   await tx.done;
+}
+
+/**
+ * Save or update a single product locally in IndexedDB
+ */
+export async function saveLocalProduct(product: Product & { is_pending?: boolean }): Promise<void> {
+  const db = await getDB();
+  await db.put('products', product);
+}
+
+/**
+ * Delete a product locally in IndexedDB
+ */
+export async function deleteLocalProduct(id: number): Promise<void> {
+  const db = await getDB();
+  await db.delete('products', id);
 }
 
 /**
@@ -95,17 +117,39 @@ export async function getProductCount(): Promise<number> {
 export async function replaceAllCategories(categories: Category[]): Promise<void> {
   const db = await getDB();
   const tx = db.transaction('categories', 'readwrite');
+  const allCurrent = await tx.store.getAll();
+  const pendingOffline = allCurrent.filter(c => c.id < 0 || (c as any).is_pending);
+
   await tx.store.clear();
   for (const category of categories) {
     await tx.store.put(category);
+  }
+  for (const pending of pendingOffline) {
+    await tx.store.put(pending);
   }
   await tx.done;
 }
 
 /**
+ * Save or update a single category locally in IndexedDB
+ */
+export async function saveLocalCategory(category: Category & { is_pending?: boolean }): Promise<void> {
+  const db = await getDB();
+  await db.put('categories', category);
+}
+
+/**
+ * Delete a category locally in IndexedDB
+ */
+export async function deleteLocalCategory(id: number): Promise<void> {
+  const db = await getDB();
+  await db.delete('categories', id);
+}
+
+/**
  * Get all cached categories
  */
-export async function getAllCategories(): Promise<Category[]> {
+export async function getAllCategories(): Promise<(Category & { is_pending?: boolean })[]> {
   const db = await getDB();
   const categories = await db.getAll('categories');
   return categories.sort((a, b) => a.sort_order - b.sort_order);

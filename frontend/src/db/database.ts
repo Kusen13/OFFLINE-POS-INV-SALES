@@ -9,10 +9,23 @@
 import { openDB, type IDBPDatabase } from 'idb';
 import type { Product, Category } from '../types/product';
 import type { PendingSale, PaymentMethod } from '../types/sale';
+import type { Expense } from '../types/inventory';
+
+export interface PendingMutation {
+  id: string; // uuid
+  entity: 'expense' | 'product' | 'category';
+  action: 'create' | 'update' | 'delete';
+  payload: any;
+  entityId?: number;
+  tempId?: number;
+  status: 'PENDING' | 'SYNCED' | 'FAILED';
+  errorMessage?: string;
+  created_at: string;
+}
 
 // Database name and version
 const DB_NAME = 'pos_offline_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 // Store names
 export const STORES = {
@@ -21,6 +34,8 @@ export const STORES = {
   PENDING_SALES: 'pendingSales',
   PAYMENT_METHODS: 'paymentMethods',
   SYNC_META: 'syncMeta',
+  EXPENSES: 'expenses',
+  PENDING_MUTATIONS: 'pendingMutations',
 } as const;
 
 export interface SyncMeta {
@@ -31,7 +46,7 @@ export interface SyncMeta {
 export type PosDB = IDBPDatabase<{
   products: {
     key: number;
-    value: Product;
+    value: Product & { is_pending?: boolean };
     indexes: {
       'by-category': number;
       'by-sku': string;
@@ -40,7 +55,7 @@ export type PosDB = IDBPDatabase<{
   };
   categories: {
     key: number;
-    value: Category;
+    value: Category & { is_pending?: boolean };
     indexes: {
       'by-name': string;
     };
@@ -61,6 +76,22 @@ export type PosDB = IDBPDatabase<{
   syncMeta: {
     key: string;
     value: SyncMeta;
+  };
+  expenses: {
+    key: number;
+    value: Expense & { is_pending?: boolean };
+    indexes: {
+      'by-date': string;
+      'by-category': string;
+    };
+  };
+  pendingMutations: {
+    key: string;
+    value: PendingMutation;
+    indexes: {
+      'by-entity': string;
+      'by-status': string;
+    };
   };
 }>;
 
@@ -105,6 +136,20 @@ export async function getDB(): Promise<PosDB> {
       // Sync metadata store
       if (!db.objectStoreNames.contains('syncMeta')) {
         db.createObjectStore('syncMeta', { keyPath: 'key' });
+      }
+
+      // Expenses store
+      if (!db.objectStoreNames.contains('expenses')) {
+        const expStore = db.createObjectStore('expenses', { keyPath: 'id' });
+        expStore.createIndex('by-date', 'expense_date');
+        expStore.createIndex('by-category', 'category');
+      }
+
+      // Pending mutations store
+      if (!db.objectStoreNames.contains('pendingMutations')) {
+        const mutStore = db.createObjectStore('pendingMutations', { keyPath: 'id' });
+        mutStore.createIndex('by-entity', 'entity');
+        mutStore.createIndex('by-status', 'status');
       }
     },
     blocked() {

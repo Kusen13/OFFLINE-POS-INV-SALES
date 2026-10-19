@@ -244,10 +244,15 @@ function StockAdjustModal({ item, onClose, onSaved }: {
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-surface-800 rounded-2xl p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in">
-        <h3 className="text-lg font-bold text-surface-100 mb-1">Adjust Stock</h3>
-        <p className="text-surface-400 text-sm mb-5">{item.name} — Current: <strong className="text-surface-200">{item.current_stock}</strong></p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-surface-800 rounded-2xl p-5 sm:p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in max-h-[90dvh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-lg font-bold text-surface-100">Adjust Stock</h3>
+          <button type="button" onClick={onClose} className="p-1 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-700">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <p className="text-surface-400 text-sm mb-5 truncate">{item.name} — Current: <strong className="text-surface-200">{item.current_stock}</strong></p>
         {formError && <div className="mb-4 p-3 rounded-lg bg-danger-500/10 border border-danger-500/30 text-danger-500 text-sm">{formError}</div>}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

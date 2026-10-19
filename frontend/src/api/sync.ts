@@ -37,3 +37,45 @@ export async function fetchSyncStatus(): Promise<SyncStatus> {
   const response = await api.get<{ success: boolean; data: SyncStatus }>('/sync/status');
   return response.data;
 }
+
+export interface MutationSyncResult {
+  processed_count: number;
+  failed_count: number;
+  processed: {
+    uuid: string;
+    tempId?: number;
+    serverId: number;
+    entity: string;
+    action: string;
+  }[];
+  failed: {
+    uuid: string;
+    entity: string;
+    action: string;
+    error: string;
+  }[];
+  server_time: string;
+}
+
+/**
+ * Send batch of offline mutations (expenses, categories, products) to the server
+ */
+export async function syncMutationsToServer(mutations: any[]): Promise<MutationSyncResult> {
+  const response = await api.post<{ success: boolean; data: MutationSyncResult }>(
+    '/sync/mutations',
+    { mutations },
+    30000
+  );
+  return response.data;
+}
+
+/**
+ * Fetch all expenses from server for offline caching
+ */
+export async function fetchExpenseUpdates(): Promise<{ expenses: any[]; server_time: string }> {
+  const response = await api.get<{ success: boolean; data: { expenses: any[]; server_time: string } }>(
+    '/sync/expenses'
+  );
+  return response.data;
+}
+

@@ -5,24 +5,37 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { fetchCategories, createCategory, updateCategory, deleteCategory } from '../../api/endpoints';
+import { replaceAllCategories, getAllCategories, saveLocalCategory, deleteLocalCategory } from '../../db/productRepository';
+import { addPendingMutation, removeMutationByTempId } from '../../db/mutationRepository';
+import { useSyncStore } from '../../features/sync/syncStore';
 import type { Category } from '../../types/product';
 
 export function CategoriesPage() {
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categories, setCategories] = useState<(Category & { is_pending?: boolean })[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [noticeMsg, setNoticeMsg] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<Category | null>(null);
 
   async function loadCategories() {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetchCategories(true);
-      setCategories(res.data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load');
+      await replaceAllCategories(res.data);
+      const localAll = await getAllCategories();
+      const pendingItems = localAll.filter(c => c.id < 0 || c.is_pending);
+      setCategories([...pendingItems, ...res.data]);
+    } catch {
+      // Fallback to local IndexedDB
+      try {
+        const local = await getAllCategories();
+        setCategories(local);
+      } catch (localErr) {
+        setError(localErr instanceof Error ? localErr.message : 'Failed to load categories');
+      }
     } finally {
       setLoading(false);
     }
@@ -31,24 +44,94 @@ export function CategoriesPage() {
   useEffect(() => { loadCategories(); }, []);
 
   async function handleSave(data: { name: string; description: string; sort_order: number }) {
-    if (editing) {
-      await updateCategory(editing.id, data);
-    } else {
-      await createCategory(data);
+    try {
+      if (editing) {
+        if (editing.id > 0) {
+          try {
+            await updateCategory(editing.id, data);
+            await saveLocalCategory({ ...editing, ...data });
+          } catch {
+            await saveLocalCategory({ ...editing, ...data, is_pending: true });
+            await addPendingMutation({
+              entity: 'category',
+              action: 'update',
+              payload: data,
+              entityId: editing.id,
+            });
+            setNoticeMsg('Updated offline! It will sync automatically when connected to the laptop.');
+          }
+        } else {
+          // Editing offline-created item
+          await saveLocalCategory({ ...editing, ...data, is_pending: true });
+          setNoticeMsg('Updated offline! It will sync automatically when connected to the laptop.');
+        }
+      } else {
+        // Create category
+        try {
+          const res = await createCategory(data);
+          if (res.data) {
+            await saveLocalCategory(res.data);
+          }
+        } catch {
+          const tempId = -Date.now();
+          const newCat: Category & { is_pending?: boolean } = {
+            id: tempId,
+            name: data.name,
+            description: data.description,
+            sort_order: data.sort_order,
+            is_active: true,
+            product_count: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            is_pending: true,
+          };
+          await saveLocalCategory(newCat);
+          await addPendingMutation({
+            entity: 'category',
+            action: 'create',
+            payload: data,
+            tempId,
+          });
+          setNoticeMsg('Saved offline! It will sync automatically when connected to the laptop.');
+        }
+      }
+      useSyncStore.getState().refreshCounts();
+    } catch (err) {
+      console.error('Save category error:', err);
+    } finally {
+      setShowForm(false);
+      setEditing(null);
+      loadCategories();
     }
-    setShowForm(false);
-    setEditing(null);
-    loadCategories();
   }
 
   async function handleDelete() {
     if (!deleteConfirm) return;
     try {
-      await deleteCategory(deleteConfirm.id);
-      setDeleteConfirm(null);
-      loadCategories();
+      if (deleteConfirm.id > 0) {
+        try {
+          await deleteCategory(deleteConfirm.id);
+          await deleteLocalCategory(deleteConfirm.id);
+        } catch {
+          await deleteLocalCategory(deleteConfirm.id);
+          await addPendingMutation({
+            entity: 'category',
+            action: 'delete',
+            payload: {},
+            entityId: deleteConfirm.id,
+          });
+          setNoticeMsg('Deleted offline! It will sync automatically when connected to the laptop.');
+        }
+      } else {
+        await deleteLocalCategory(deleteConfirm.id);
+        await removeMutationByTempId(deleteConfirm.id);
+      }
+      useSyncStore.getState().refreshCounts();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setDeleteConfirm(null);
+      loadCategories();
     }
   }
 
@@ -68,6 +151,13 @@ export function CategoriesPage() {
         </button>
       </div>
 
+      {noticeMsg && (
+        <div className="bg-primary-500/10 border border-primary-500/30 rounded-xl p-3 flex items-center justify-between text-xs text-primary-300 font-medium">
+          <span>💾 {noticeMsg}</span>
+          <button onClick={() => setNoticeMsg(null)} className="text-surface-400 hover:text-white ml-2">✕</button>
+        </div>
+      )}
+
       {error && (
         <div className="bg-danger-500/10 border border-danger-500/30 rounded-xl p-4">
           <p className="text-danger-500 text-sm">⚠️ {error}</p>
@@ -85,11 +175,19 @@ export function CategoriesPage() {
                   <h3 className="text-lg font-bold text-surface-100">{cat.name}</h3>
                   {cat.description && <p className="text-surface-400 text-sm mt-1">{cat.description}</p>}
                 </div>
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => { setEditing(cat); setShowForm(true); }} className="p-1.5 rounded-lg text-surface-400 hover:text-primary-400 hover:bg-primary-500/10">
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => { setEditing(cat); setShowForm(true); }}
+                    className="p-2 rounded-lg text-surface-300 hover:text-primary-400 bg-surface-700/60 hover:bg-surface-700 border border-surface-600/40 transition-colors"
+                    title="Edit Category"
+                  >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                   </button>
-                  <button onClick={() => setDeleteConfirm(cat)} className="p-1.5 rounded-lg text-surface-400 hover:text-danger-500 hover:bg-danger-500/10">
+                  <button
+                    onClick={() => setDeleteConfirm(cat)}
+                    className="p-2 rounded-lg text-surface-300 hover:text-danger-500 bg-surface-700/60 hover:bg-surface-700 border border-surface-600/40 transition-colors"
+                    title="Delete Category"
+                  >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                   </button>
                 </div>
@@ -99,6 +197,11 @@ export function CategoriesPage() {
                   {cat.product_count ?? 0} products
                 </span>
                 <span className="text-surface-500 text-xs">Order: {cat.sort_order}</span>
+                {(cat.is_pending || cat.id < 0) && (
+                  <span className="px-2 py-0.5 rounded-full bg-warning-500/20 text-warning-400 text-xs font-semibold">
+                    ⏳ Pending Sync
+                  </span>
+                )}
               </div>
             </div>
           ))}
@@ -116,8 +219,8 @@ export function CategoriesPage() {
 
       {/* Delete confirmation */}
       {deleteConfirm && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-surface-800 rounded-2xl p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 rounded-2xl p-5 sm:p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in max-h-[90dvh] overflow-y-auto">
             <h3 className="text-lg font-bold text-surface-100 mb-2">Delete Category?</h3>
             <p className="text-surface-400 text-sm mb-6">
               Delete <strong className="text-surface-200">{deleteConfirm.name}</strong>? Products in this category will become uncategorized.
@@ -160,9 +263,14 @@ function CategoryFormModal({ category, onSave, onClose }: {
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-surface-800 rounded-2xl p-6 max-w-md w-full border border-surface-700 shadow-2xl animate-fade-in">
-        <h3 className="text-lg font-bold text-surface-100 mb-5">{category ? 'Edit Category' : 'New Category'}</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-surface-800 rounded-2xl p-5 sm:p-6 max-w-md w-full border border-surface-700 shadow-2xl animate-fade-in max-h-[90dvh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-surface-100">{category ? 'Edit Category' : 'New Category'}</h3>
+          <button type="button" onClick={onClose} className="p-1 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-700">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
         {formError && <div className="mb-4 p-3 rounded-lg bg-danger-500/10 border border-danger-500/30 text-danger-500 text-sm">{formError}</div>}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

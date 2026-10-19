@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { useSyncStore } from '../../features/sync/syncStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getAllSales, resetFailedSales, cleanupOldSyncedSales } from '../../db/salesRepository';
+import { getPendingMutations, type PendingMutation } from '../../db/mutationRepository';
 import { formatCurrency } from '../../utils/currency';
 import { formatDateTime, getRelativeTime } from '../../utils/date';
 import type { PendingSale } from '../../types/sale';
@@ -14,18 +15,23 @@ export function SyncPage() {
   const isOnline = useOnlineStatus();
   const { pendingCount, failedCount, syncedCount, isSyncing: syncing, lastSyncTime, lastError: lastSyncError, performSync, refreshCounts } = useSyncStore();
   const [sales, setSales] = useState<PendingSale[]>([]);
+  const [mutations, setMutations] = useState<PendingMutation[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState('');
 
   useEffect(() => {
-    loadSales();
+    loadData();
   }, [pendingCount, failedCount, syncedCount]);
 
-  async function loadSales() {
+  async function loadData() {
     setLoading(true);
     try {
-      const all = await getAllSales();
-      setSales(all);
+      const [allSales, allMutations] = await Promise.all([
+        getAllSales(),
+        getPendingMutations(),
+      ]);
+      setSales(allSales);
+      setMutations(allMutations);
     } finally {
       setLoading(false);
     }
@@ -33,14 +39,14 @@ export function SyncPage() {
 
   async function handleSync() {
     await performSync();
-    await loadSales();
+    await loadData();
   }
 
   async function handleRetryFailed() {
     const count = await resetFailedSales();
     setActionMsg(`${count} failed sale(s) reset to pending`);
     await refreshCounts();
-    await loadSales();
+    await loadData();
     setTimeout(() => setActionMsg(''), 3000);
   }
 
@@ -48,7 +54,7 @@ export function SyncPage() {
     const count = await cleanupOldSyncedSales(30);
     setActionMsg(`${count} old synced sale(s) cleaned up`);
     await refreshCounts();
-    await loadSales();
+    await loadData();
     setTimeout(() => setActionMsg(''), 3000);
   }
 
@@ -58,7 +64,7 @@ export function SyncPage() {
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
       <div>
         <h1 className="text-2xl font-bold text-surface-50">Sync Center</h1>
-        <p className="text-surface-400 mt-1">Manage offline sales synchronization</p>
+        <p className="text-surface-400 mt-1">Manage offline sales, expenses, and catalog synchronization</p>
       </div>
 
       {/* Connection status */}
@@ -68,7 +74,7 @@ export function SyncPage() {
         <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-success-500 animate-pulse' : 'bg-danger-500'}`} />
         <div>
           <p className={`font-medium text-sm ${isOnline ? 'text-success-500' : 'text-danger-500'}`}>
-            {isOnline ? 'Connected to Server' : 'Offline — Sales are saved locally'}
+            {isOnline ? 'Connected to Server' : 'Offline — Data saved locally'}
           </p>
           {lastSyncTime && (
             <p className="text-surface-400 text-xs mt-0.5">Last sync: {getRelativeTime(lastSyncTime)}</p>
@@ -80,9 +86,9 @@ export function SyncPage() {
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-warning-500/10 rounded-xl p-4 border border-warning-500/20 text-center">
           <p className="text-3xl font-bold text-warning-500">{pendingCount}</p>
-          <p className="text-surface-400 text-xs mt-1">Pending</p>
+          <p className="text-surface-400 text-xs mt-1">Pending Total</p>
           {totalPendingAmount > 0 && (
-            <p className="text-warning-500 text-xs font-medium mt-0.5">{formatCurrency(totalPendingAmount)}</p>
+            <p className="text-warning-500 text-xs font-medium mt-0.5">{formatCurrency(totalPendingAmount)} sales</p>
           )}
         </div>
         <div className="bg-danger-500/10 rounded-xl p-4 border border-danger-500/20 text-center">
@@ -107,7 +113,7 @@ export function SyncPage() {
             Syncing...
           </>
         ) : (
-          <>🔄 Sync {pendingCount} Pending Sale{pendingCount !== 1 ? 's' : ''}</>
+          <>🔄 Sync All ({pendingCount} Pending Item{pendingCount !== 1 ? 's' : ''})</>
         )}
       </button>
 
@@ -138,6 +144,30 @@ export function SyncPage() {
           </button>
         )}
       </div>
+
+      {/* Pending Offline Changes (Expenses, Products, Categories) */}
+      {mutations.length > 0 && (
+        <div className="bg-surface-800/50 rounded-xl border border-warning-500/30 overflow-hidden">
+          <div className="px-4 py-3 bg-warning-500/10 border-b border-warning-500/20 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-warning-400">Offline Changes to Sync ({mutations.length})</h3>
+            <span className="text-xs text-surface-400">Expenses • Products • Categories</span>
+          </div>
+          <div className="divide-y divide-surface-700/30 max-h-[250px] overflow-y-auto">
+            {mutations.map(m => (
+              <div key={m.id} className="px-4 py-2.5 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="capitalize px-2 py-0.5 rounded bg-surface-700 text-surface-200 font-semibold">{m.entity}</span>
+                  <span className="text-surface-300 uppercase font-mono text-[11px] text-primary-400">{m.action}</span>
+                  <span className="text-surface-400 truncate max-w-[200px]">
+                    {m.payload?.name || m.payload?.description || `ID: ${m.entityId}`}
+                  </span>
+                </div>
+                <span className="text-warning-400 font-medium">⏳ Pending</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Transaction log */}
       <div className="bg-surface-800/50 rounded-xl border border-surface-700/50 overflow-hidden">

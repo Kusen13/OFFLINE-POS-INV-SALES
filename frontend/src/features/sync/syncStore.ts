@@ -1,11 +1,9 @@
-/**
- * Sync Store - manages sync state and operations
- */
-
 import { create } from 'zustand';
 import { getPendingSales, markSalesSynced, markSalesFailed, getSyncCounts, resetFailedSales } from '../../db/salesRepository';
-import { replaceAllProducts, replaceAllCategories, replaceAllPaymentMethods, setLastProductSync, getLastProductSync } from '../../db/productRepository';
-import { syncSalesToServer, fetchProductUpdates } from '../../api/sync';
+import { replaceAllProducts, replaceAllCategories, replaceAllPaymentMethods, setLastProductSync, getLastProductSync, deleteLocalProduct, deleteLocalCategory } from '../../db/productRepository';
+import { replaceAllExpenses, deleteLocalExpense } from '../../db/expenseRepository';
+import { getPendingMutations, markMutationsSynced, markMutationsFailed, getPendingMutationCount } from '../../db/mutationRepository';
+import { syncSalesToServer, fetchProductUpdates, syncMutationsToServer, fetchExpenseUpdates } from '../../api/sync';
 import { checkServerHealth } from '../../api/client';
 
 interface SyncState {
@@ -24,6 +22,7 @@ interface SyncState {
   checkServer: () => Promise<boolean>;
   retryFailed: () => Promise<void>;
   syncProducts: () => Promise<void>;
+  syncExpenses: () => Promise<void>;
 }
 
 export const useSyncStore = create<SyncState>((set, get) => ({
@@ -38,8 +37,9 @@ export const useSyncStore = create<SyncState>((set, get) => ({
 
   refreshCounts: async () => {
     const counts = await getSyncCounts();
+    const mutationCount = await getPendingMutationCount();
     set({
-      pendingCount: counts.pending,
+      pendingCount: counts.pending + mutationCount,
       syncedCount: counts.synced,
       failedCount: counts.failed,
     });
@@ -71,50 +71,69 @@ export const useSyncStore = create<SyncState>((set, get) => ({
         return;
       }
 
-      // 2. Get pending sales
+      // 2. Sync pending sales
       set({ syncProgress: 'Gathering pending sales...' });
       const pendingSales = await getPendingSales();
 
-      if (pendingSales.length === 0) {
-        set({ syncProgress: 'Syncing products...' });
-        // Still sync products even if no sales to send
-        await get().syncProducts();
-        set({ 
-          isSyncing: false, 
-          syncProgress: '',
-          lastSyncTime: new Date().toISOString(),
-        });
-        await get().refreshCounts();
-        return;
+      if (pendingSales.length > 0) {
+        set({ syncProgress: `Syncing ${pendingSales.length} sale(s)...` });
+        const result = await syncSalesToServer(pendingSales);
+
+        if (result.synced.length > 0 || result.duplicates.length > 0) {
+          const syncedUuids = [
+            ...result.synced.map(s => s.uuid),
+            ...result.duplicates.map(d => d.uuid),
+          ];
+          await markSalesSynced(syncedUuids);
+        }
+
+        if (result.failed.length > 0) {
+          await markSalesFailed(result.failed.map(f => ({ uuid: f.uuid, error: f.error })));
+        }
       }
 
-      // 3. Send sales to server
-      set({ syncProgress: `Syncing ${pendingSales.length} sale(s)...` });
-      const result = await syncSalesToServer(pendingSales);
+      // 3. Sync pending mutations (expenses, products, categories)
+      set({ syncProgress: 'Gathering offline changes...' });
+      const pendingMutations = await getPendingMutations();
 
-      // 4. Update local statuses based on server response
-      if (result.synced.length > 0 || result.duplicates.length > 0) {
-        const syncedUuids = [
-          ...result.synced.map(s => s.uuid),
-          ...result.duplicates.map(d => d.uuid),
-        ];
-        await markSalesSynced(syncedUuids);
+      if (pendingMutations.length > 0) {
+        set({ syncProgress: `Syncing ${pendingMutations.length} offline change(s)...` });
+        const mutResult = await syncMutationsToServer(pendingMutations);
+
+        if (mutResult.processed && mutResult.processed.length > 0) {
+          await markMutationsSynced(mutResult.processed.map(m => m.uuid));
+
+          // Clean up temp negative IDs now that server has created real records
+          for (const item of mutResult.processed) {
+            if (item.tempId && item.tempId < 0) {
+              if (item.entity === 'expense') {
+                await deleteLocalExpense(item.tempId);
+              } else if (item.entity === 'product') {
+                await deleteLocalProduct(item.tempId);
+              } else if (item.entity === 'category') {
+                await deleteLocalCategory(item.tempId);
+              }
+            }
+          }
+        }
+
+        if (mutResult.failed && mutResult.failed.length > 0) {
+          await markMutationsFailed(mutResult.failed);
+        }
       }
 
-      if (result.failed.length > 0) {
-        await markSalesFailed(result.failed.map(f => ({ uuid: f.uuid, error: f.error })));
-      }
-
-      // 5. Sync products from server
-      set({ syncProgress: 'Syncing products...' });
+      // 4. Download latest products & categories from server
+      set({ syncProgress: 'Syncing products & categories...' });
       await get().syncProducts();
+
+      // 5. Download latest expenses from server
+      set({ syncProgress: 'Syncing expenses...' });
+      await get().syncExpenses();
 
       // 6. Update state
       set({
         lastSyncTime: new Date().toISOString(),
-        lastError: result.failed_count > 0
-          ? `${result.failed_count} sale(s) failed to sync. Check sync history for details.`
-          : null,
+        lastError: null,
       });
 
       await get().refreshCounts();
@@ -140,26 +159,32 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       const lastSync = await getLastProductSync();
       const data = await fetchProductUpdates(lastSync);
 
-      if (data.products.length > 0) {
-        if (data.is_incremental) {
-          // For incremental, we'd upsert, but for simplicity do full replace
-          // since incremental sync of IndexedDB is complex
-        }
+      if (data.products && data.products.length > 0) {
         await replaceAllProducts(data.products);
       }
 
-      if (data.categories.length > 0) {
+      if (data.categories && data.categories.length > 0) {
         await replaceAllCategories(data.categories);
       }
 
-      if (data.payment_methods.length > 0) {
+      if (data.payment_methods && data.payment_methods.length > 0) {
         await replaceAllPaymentMethods(data.payment_methods);
       }
 
       await setLastProductSync(data.server_time);
     } catch (error) {
       console.error('Failed to sync products:', error);
-      // Don't throw — product sync failure shouldn't block sale sync
+    }
+  },
+
+  syncExpenses: async () => {
+    try {
+      const data = await fetchExpenseUpdates();
+      if (data.expenses && Array.isArray(data.expenses)) {
+        await replaceAllExpenses(data.expenses);
+      }
+    } catch (error) {
+      console.error('Failed to sync expenses:', error);
     }
   },
 }));

@@ -5,6 +5,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { fetchProducts, fetchCategories, createProduct, updateProduct, deleteProduct } from '../../api/endpoints';
+import { replaceAllProducts, getAllProducts, saveLocalProduct, deleteLocalProduct, getAllCategories } from '../../db/productRepository';
+import { addPendingMutation, removeMutationByTempId } from '../../db/mutationRepository';
+import { useSyncStore } from '../../features/sync/syncStore';
 import { formatCurrency } from '../../utils/currency';
 import { getTodayStr } from '../../utils/date';
 import { exportToCSV, formatProductsForCSV } from '../../utils/csv';
@@ -18,12 +21,13 @@ interface ProductFilters {
 }
 
 export function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<(Product & { is_pending?: boolean })[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [pagination, setPagination] = useState({ total: 0, page: 1, per_page: 15, total_pages: 0 });
   const [filters, setFilters] = useState<ProductFilters>({ page: 1, per_page: 15, search: '', category_id: undefined });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [noticeMsg, setNoticeMsg] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<Product | null>(null);
@@ -39,10 +43,33 @@ export function ProductsPage() {
         search: filters.search || undefined,
         category_id: filters.category_id,
       });
-      setProducts(res.data);
+      await replaceAllProducts(res.data);
+      const localAll = await getAllProducts();
+      const pendingItems = localAll.filter(p => p.id < 0 || (p as any).is_pending);
+      setProducts([...pendingItems, ...res.data]);
       setPagination(res.pagination);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load products');
+    } catch {
+      // Fallback to local IndexedDB
+      try {
+        const localAll = await getAllProducts();
+        let filtered = localAll;
+        if (filters.search) {
+          const q = filters.search.toLowerCase();
+          filtered = filtered.filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
+        }
+        if (filters.category_id) {
+          filtered = filtered.filter(p => p.category_id === filters.category_id);
+        }
+        setProducts(filtered);
+        setPagination({
+          page: 1,
+          per_page: filtered.length || 15,
+          total: filtered.length,
+          total_pages: 1,
+        });
+      } catch (localErr) {
+        setError(localErr instanceof Error ? localErr.message : 'Failed to load products');
+      }
     } finally {
       setLoading(false);
     }
@@ -53,7 +80,12 @@ export function ProductsPage() {
   }, [loadProducts]);
 
   useEffect(() => {
-    fetchCategories(true).then(res => setCategories(res.data)).catch(() => {});
+    fetchCategories(true)
+      .then(res => setCategories(res.data))
+      .catch(async () => {
+        const localCats = await getAllCategories();
+        setCategories(localCats);
+      });
   }, []);
 
   // Debounced search
@@ -67,26 +99,112 @@ export function ProductsPage() {
   async function handleSaveProduct(data: ProductFormData) {
     try {
       if (editingProduct) {
-        await updateProduct(editingProduct.id, data);
+        if (editingProduct.id > 0) {
+          try {
+            await updateProduct(editingProduct.id, data);
+            await saveLocalProduct({
+              ...editingProduct,
+              ...data,
+              category_name: categories.find(c => c.id === data.category_id)?.name ?? editingProduct.category_name,
+            });
+          } catch {
+            await saveLocalProduct({
+              ...editingProduct,
+              ...data,
+              category_name: categories.find(c => c.id === data.category_id)?.name ?? editingProduct.category_name,
+              is_pending: true,
+            });
+            await addPendingMutation({
+              entity: 'product',
+              action: 'update',
+              payload: data,
+              entityId: editingProduct.id,
+            });
+            setNoticeMsg('Updated offline! It will sync automatically when connected to the laptop.');
+          }
+        } else {
+          // Editing pending offline product
+          await saveLocalProduct({
+            ...editingProduct,
+            ...data,
+            category_name: categories.find(c => c.id === data.category_id)?.name ?? editingProduct.category_name,
+            is_pending: true,
+          });
+          setNoticeMsg('Updated offline! It will sync automatically when connected to the laptop.');
+        }
       } else {
-        await createProduct(data);
+        // Create new product
+        try {
+          const res = await createProduct(data);
+          if (res.data) {
+            await saveLocalProduct(res.data);
+          }
+        } catch {
+          const tempId = -Date.now();
+          const newProd: Product & { is_pending?: boolean } = {
+            id: tempId,
+            category_id: data.category_id,
+            category_name: categories.find(c => c.id === data.category_id)?.name ?? 'General',
+            name: data.name,
+            sku: data.sku,
+            description: data.description ?? null,
+            cost_price: data.cost_price,
+            selling_price: data.selling_price,
+            current_stock: data.current_stock ?? 0,
+            low_stock_threshold: data.low_stock_threshold ?? 10,
+            image_path: null,
+            is_active: data.is_active ?? true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            is_pending: true,
+          };
+          await saveLocalProduct(newProd);
+          await addPendingMutation({
+            entity: 'product',
+            action: 'create',
+            payload: data,
+            tempId,
+          });
+          setNoticeMsg('Saved offline! It will sync automatically when connected to the laptop.');
+        }
       }
+      useSyncStore.getState().refreshCounts();
+    } catch (err) {
+      console.error('Save product error:', err);
+    } finally {
       setShowForm(false);
       setEditingProduct(null);
       loadProducts();
-    } catch (err) {
-      throw err;
     }
   }
 
   async function handleDelete() {
     if (!deleteConfirm) return;
     try {
-      await deleteProduct(deleteConfirm.id);
-      setDeleteConfirm(null);
-      loadProducts();
+      if (deleteConfirm.id > 0) {
+        try {
+          await deleteProduct(deleteConfirm.id);
+          await deleteLocalProduct(deleteConfirm.id);
+        } catch {
+          await deleteLocalProduct(deleteConfirm.id);
+          await addPendingMutation({
+            entity: 'product',
+            action: 'delete',
+            payload: {},
+            entityId: deleteConfirm.id,
+          });
+          setNoticeMsg('Deleted offline! It will sync automatically when connected to the laptop.');
+        }
+      } else {
+        await deleteLocalProduct(deleteConfirm.id);
+        await removeMutationByTempId(deleteConfirm.id);
+      }
+      useSyncStore.getState().refreshCounts();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setDeleteConfirm(null);
+      loadProducts();
     }
   }
 
@@ -146,6 +264,13 @@ export function ProductsPage() {
         </div>
       </div>
 
+      {noticeMsg && (
+        <div className="bg-primary-500/10 border border-primary-500/30 rounded-xl p-3 flex items-center justify-between text-xs text-primary-300 font-medium">
+          <span>💾 {noticeMsg}</span>
+          <button onClick={() => setNoticeMsg(null)} className="text-surface-400 hover:text-white ml-2">✕</button>
+        </div>
+      )}
+
       {/* Error */}
       {error && (
         <div className="bg-danger-500/10 border border-danger-500/30 rounded-xl p-4 flex items-center justify-between">
@@ -190,7 +315,14 @@ export function ProductsPage() {
                       <td className="px-4 py-3">
                         <div>
                           <p className="text-surface-100 font-medium text-sm">{p.name}</p>
-                          <p className="text-surface-500 text-xs">SKU: {p.sku}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-surface-500 text-xs">SKU: {p.sku}</span>
+                            {(p.is_pending || p.id < 0) && (
+                              <span className="px-1.5 py-0.2 rounded-full bg-warning-500/20 text-warning-400 text-[10px] font-semibold">
+                                ⏳ Pending Sync
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-surface-300 text-sm">{p.category_name}</td>
@@ -243,13 +375,28 @@ export function ProductsPage() {
                   <div className="flex items-start justify-between">
                     <div className="min-w-0 flex-1">
                       <p className="text-surface-100 font-medium">{p.name}</p>
-                      <p className="text-surface-500 text-xs mt-0.5">{p.category_name} • {p.sku}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-surface-500 text-xs">{p.category_name} • {p.sku}</span>
+                        {(p.is_pending || p.id < 0) && (
+                          <span className="px-1.5 py-0.2 rounded-full bg-warning-500/20 text-warning-400 text-[10px] font-semibold">
+                            ⏳ Pending Sync
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1 ml-2">
-                      <button onClick={() => { setEditingProduct(p); setShowForm(true); }} className="p-1.5 rounded-lg text-surface-400 hover:text-primary-400">
+                    <div className="flex items-center gap-1.5 ml-2 shrink-0">
+                      <button
+                        onClick={() => { setEditingProduct(p); setShowForm(true); }}
+                        className="p-2 rounded-lg text-surface-300 hover:text-primary-400 bg-surface-700/60 hover:bg-surface-700 border border-surface-600/40 transition-colors"
+                        title="Edit Product"
+                      >
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                       </button>
-                      <button onClick={() => setDeleteConfirm(p)} className="p-1.5 rounded-lg text-surface-400 hover:text-danger-500">
+                      <button
+                        onClick={() => setDeleteConfirm(p)}
+                        className="p-2 rounded-lg text-surface-300 hover:text-danger-500 bg-surface-700/60 hover:bg-surface-700 border border-surface-600/40 transition-colors"
+                        title="Delete Product"
+                      >
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                       </button>
                     </div>
@@ -307,8 +454,8 @@ export function ProductsPage() {
 
       {/* Delete confirmation modal */}
       {deleteConfirm && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-surface-800 rounded-2xl p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-surface-800 rounded-2xl p-5 sm:p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in max-h-[90dvh] overflow-y-auto">
             <h3 className="text-lg font-bold text-surface-100 mb-2">Delete Product?</h3>
             <p className="text-surface-400 text-sm mb-6">
               Are you sure you want to delete <strong className="text-surface-200">{deleteConfirm.name}</strong>? This action cannot be undone.
@@ -367,8 +514,8 @@ function ProductFormModal({ product, categories, onSave, onClose }: {
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[10vh] bg-black/60 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-surface-800 rounded-2xl p-6 max-w-lg w-full border border-surface-700 shadow-2xl animate-fade-in my-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-surface-800 rounded-2xl p-5 sm:p-6 max-w-lg w-full border border-surface-700 shadow-2xl animate-fade-in max-h-[90dvh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-bold text-surface-100">{product ? 'Edit Product' : 'New Product'}</h3>
           <button onClick={onClose} className="p-1 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-700">
@@ -381,7 +528,7 @@ function ProductFormModal({ product, categories, onSave, onClose }: {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             <FormField label="Product Name *">
               <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="form-input" placeholder="e.g., Iced Americano" required />
             </FormField>
@@ -400,7 +547,7 @@ function ProductFormModal({ product, categories, onSave, onClose }: {
             <textarea value={form.description ?? ''} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="form-input" rows={2} placeholder="Optional description" />
           </FormField>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             <FormField label="Cost Price *">
               <input type="number" step="0.01" min="0" value={form.cost_price} onChange={e => setForm(f => ({ ...f, cost_price: parseFloat(e.target.value) || 0 }))} className="form-input" required />
             </FormField>
@@ -410,7 +557,7 @@ function ProductFormModal({ product, categories, onSave, onClose }: {
           </div>
 
           {!product && (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <FormField label="Initial Stock">
                 <input type="number" min="0" value={form.current_stock ?? 0} onChange={e => setForm(f => ({ ...f, current_stock: parseInt(e.target.value) || 0 }))} className="form-input" />
               </FormField>

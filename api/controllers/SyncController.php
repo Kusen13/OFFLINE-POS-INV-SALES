@@ -28,6 +28,22 @@ function handleSync(string $method, ?string $action): void {
             }
             break;
 
+        case 'mutations':
+            if ($method === 'POST') {
+                syncMutationsFromDevice($pdo);
+            } else {
+                jsonMethodNotAllowed();
+            }
+            break;
+
+        case 'expenses':
+            if ($method === 'GET') {
+                syncExpensesToDevice($pdo);
+            } else {
+                jsonMethodNotAllowed();
+            }
+            break;
+
         case 'status':
             if ($method === 'GET') {
                 getSyncStatus($pdo);
@@ -385,6 +401,264 @@ function getSyncStatus(PDO $pdo): void {
         'today_synced' => $todaySynced,
         'recent_failures' => $recentFailures,
         'recent_logs' => $recentLogs,
+        'server_time' => date('c'),
+    ]);
+}
+
+/**
+ * Send all expenses to mobile device for offline cache
+ */
+function syncExpensesToDevice(PDO $pdo): void {
+    $stmt = $pdo->query('SELECT * FROM expenses ORDER BY expense_date DESC, id DESC');
+    $expenses = $stmt->fetchAll();
+
+    $expenses = array_map(function ($e) {
+        $e['id'] = (int) $e['id'];
+        $e['amount'] = (float) $e['amount'];
+        return $e;
+    }, $expenses);
+
+    jsonResponse([
+        'expenses' => $expenses,
+        'server_time' => date('c'),
+    ]);
+}
+
+/**
+ * Process offline mutations for Expenses, Categories, and Products
+ */
+function syncMutationsFromDevice(PDO $pdo): void {
+    $data = getJsonBody();
+    $mutations = $data['mutations'] ?? [];
+
+    if (!is_array($mutations)) {
+        jsonError('Request must contain a "mutations" array', 400);
+    }
+
+    $results = [
+        'processed' => [],
+        'failed' => [],
+    ];
+
+    // Maintain a map of temp IDs to real server IDs (e.g. for newly created categories)
+    $categoryTempMap = [];
+
+    foreach ($mutations as $m) {
+        $uuid = $m['id'] ?? null;
+        $entity = $m['entity'] ?? '';
+        $action = $m['action'] ?? '';
+        $payload = $m['payload'] ?? [];
+        $entityId = isset($m['entityId']) ? (int) $m['entityId'] : null;
+        $tempId = isset($m['tempId']) ? (int) $m['tempId'] : null;
+
+        try {
+            if ($entity === 'expense') {
+                if ($action === 'create') {
+                    $stmt = $pdo->prepare(
+                        'INSERT INTO expenses (category, description, amount, expense_date) 
+                         VALUES (:cat, :desc, :amount, :date)'
+                    );
+                    $stmt->execute([
+                        ':cat' => sanitizeString($payload['category'] ?? 'Other'),
+                        ':desc' => sanitizeString($payload['description'] ?? ''),
+                        ':amount' => sanitizeDecimal($payload['amount'] ?? 0),
+                        ':date' => $payload['expense_date'] ?? date('Y-m-d'),
+                    ]);
+                    $serverId = (int) $pdo->lastInsertId();
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'tempId' => $tempId,
+                        'serverId' => $serverId,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                } elseif ($action === 'update' && $entityId) {
+                    $stmt = $pdo->prepare(
+                        'UPDATE expenses SET category = :cat, description = :desc, amount = :amount, expense_date = :date 
+                         WHERE id = :id'
+                    );
+                    $stmt->execute([
+                        ':cat' => sanitizeString($payload['category'] ?? 'Other'),
+                        ':desc' => sanitizeString($payload['description'] ?? ''),
+                        ':amount' => sanitizeDecimal($payload['amount'] ?? 0),
+                        ':date' => $payload['expense_date'] ?? date('Y-m-d'),
+                        ':id' => $entityId,
+                    ]);
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'serverId' => $entityId,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                } elseif ($action === 'delete' && $entityId) {
+                    $stmt = $pdo->prepare('DELETE FROM expenses WHERE id = :id');
+                    $stmt->execute([':id' => $entityId]);
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'serverId' => $entityId,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                }
+            } elseif ($entity === 'category') {
+                if ($action === 'create') {
+                    // Check duplicate by name
+                    $name = sanitizeString($payload['name'] ?? '');
+                    $stmt = $pdo->prepare('SELECT id FROM categories WHERE name = :name');
+                    $stmt->execute([':name' => $name]);
+                    $existing = $stmt->fetch();
+
+                    if ($existing) {
+                        $serverId = (int) $existing['id'];
+                    } else {
+                        $stmt = $pdo->prepare(
+                            'INSERT INTO categories (name, description, sort_order, is_active) 
+                             VALUES (:name, :description, :sort_order, 1)'
+                        );
+                        $stmt->execute([
+                            ':name' => $name,
+                            ':description' => sanitizeString($payload['description'] ?? null),
+                            ':sort_order' => sanitizeInt($payload['sort_order'] ?? 0),
+                        ]);
+                        $serverId = (int) $pdo->lastInsertId();
+                    }
+
+                    if ($tempId !== null) {
+                        $categoryTempMap[$tempId] = $serverId;
+                    }
+
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'tempId' => $tempId,
+                        'serverId' => $serverId,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                } elseif ($action === 'update' && $entityId) {
+                    $stmt = $pdo->prepare(
+                        'UPDATE categories SET name = :name, description = :description, sort_order = :sort_order 
+                         WHERE id = :id'
+                    );
+                    $stmt->execute([
+                        ':name' => sanitizeString($payload['name'] ?? ''),
+                        ':description' => sanitizeString($payload['description'] ?? null),
+                        ':sort_order' => sanitizeInt($payload['sort_order'] ?? 0),
+                        ':id' => $entityId,
+                    ]);
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'serverId' => $entityId,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                } elseif ($action === 'delete' && $entityId) {
+                    $stmt = $pdo->prepare('UPDATE categories SET is_active = 0 WHERE id = :id');
+                    $stmt->execute([':id' => $entityId]);
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'serverId' => $entityId,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                }
+            } elseif ($entity === 'product') {
+                if ($action === 'create') {
+                    $categoryId = sanitizeInt($payload['category_id'] ?? 0);
+                    // If category_id was a temp ID from this batch, map to real server ID
+                    if (isset($categoryTempMap[$categoryId])) {
+                        $categoryId = $categoryTempMap[$categoryId];
+                    }
+
+                    $sku = sanitizeString($payload['sku'] ?? '');
+                    // Check duplicate SKU
+                    $stmt = $pdo->prepare('SELECT id FROM products WHERE sku = :sku');
+                    $stmt->execute([':sku' => $sku]);
+                    $existing = $stmt->fetch();
+
+                    if ($existing) {
+                        $serverId = (int) $existing['id'];
+                    } else {
+                        $stmt = $pdo->prepare(
+                            'INSERT INTO products (category_id, name, sku, description, cost_price, selling_price, current_stock, low_stock_threshold, is_active) 
+                             VALUES (:cat, :name, :sku, :desc, :cost, :price, :stock, :low, :active)'
+                        );
+                        $stmt->execute([
+                            ':cat' => $categoryId,
+                            ':name' => sanitizeString($payload['name'] ?? ''),
+                            ':sku' => $sku,
+                            ':desc' => sanitizeString($payload['description'] ?? null),
+                            ':cost' => sanitizeDecimal($payload['cost_price'] ?? 0),
+                            ':price' => sanitizeDecimal($payload['selling_price'] ?? 0),
+                            ':stock' => sanitizeInt($payload['current_stock'] ?? 0),
+                            ':low' => sanitizeInt($payload['low_stock_threshold'] ?? 10),
+                            ':active' => !empty($payload['is_active']) ? 1 : 0,
+                        ]);
+                        $serverId = (int) $pdo->lastInsertId();
+                    }
+
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'tempId' => $tempId,
+                        'serverId' => $serverId,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                } elseif ($action === 'update' && $entityId) {
+                    $categoryId = sanitizeInt($payload['category_id'] ?? 0);
+                    if (isset($categoryTempMap[$categoryId])) {
+                        $categoryId = $categoryTempMap[$categoryId];
+                    }
+
+                    $stmt = $pdo->prepare(
+                        'UPDATE products SET category_id = :cat, name = :name, sku = :sku, description = :desc, 
+                                            cost_price = :cost, selling_price = :price, current_stock = :stock, 
+                                            low_stock_threshold = :low, is_active = :active 
+                         WHERE id = :id'
+                    );
+                    $stmt->execute([
+                        ':cat' => $categoryId,
+                        ':name' => sanitizeString($payload['name'] ?? ''),
+                        ':sku' => sanitizeString($payload['sku'] ?? ''),
+                        ':desc' => sanitizeString($payload['description'] ?? null),
+                        ':cost' => sanitizeDecimal($payload['cost_price'] ?? 0),
+                        ':price' => sanitizeDecimal($payload['selling_price'] ?? 0),
+                        ':stock' => sanitizeInt($payload['current_stock'] ?? 0),
+                        ':low' => sanitizeInt($payload['low_stock_threshold'] ?? 10),
+                        ':active' => !empty($payload['is_active']) ? 1 : 0,
+                        ':id' => $entityId,
+                    ]);
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'serverId' => $entityId,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                } elseif ($action === 'delete' && $entityId) {
+                    $stmt = $pdo->prepare('UPDATE products SET is_active = 0 WHERE id = :id');
+                    $stmt->execute([':id' => $entityId]);
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'serverId' => $entityId,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                }
+            }
+        } catch (Throwable $e) {
+            $results['failed'][] = [
+                'uuid' => $uuid,
+                'entity' => $entity,
+                'action' => $action,
+                'error' => $e->getMessage(),
+            ];
+        }
+    }
+
+    jsonResponse([
+        'processed_count' => count($results['processed']),
+        'failed_count' => count($results['failed']),
+        'processed' => $results['processed'],
+        'failed' => $results['failed'],
         'server_time' => date('c'),
     ]);
 }
