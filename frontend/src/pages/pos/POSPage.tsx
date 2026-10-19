@@ -40,6 +40,8 @@ export function POSPage() {
   const [activeCategory, setActiveCategory] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [syncingProducts, setSyncingProducts] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [lastReceipt, setLastReceipt] = useState<PendingSale | null>(null);
 
   // Checkout state
@@ -58,6 +60,27 @@ export function POSPage() {
     loadLocalData();
   }, []);
 
+  async function handleDownloadProducts() {
+    setSyncingProducts(true);
+    setDownloadError(null);
+    try {
+      const data = await fetchProductUpdates();
+      if (data.products && data.products.length > 0) {
+        await replaceAllProducts(data.products);
+        await replaceAllCategories(data.categories);
+        await replaceAllPaymentMethods(data.payment_methods);
+        await setLastProductSync(data.server_time);
+        setProducts(data.products.filter(p => p.is_active));
+        setCategories(data.categories);
+        setPaymentMethods(data.payment_methods.filter(m => m.is_active));
+      }
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : 'Failed to reach server');
+    } finally {
+      setSyncingProducts(false);
+    }
+  }
+
   async function loadLocalData() {
     setLoading(true);
     try {
@@ -69,7 +92,7 @@ export function POSPage() {
       if (prods.length === 0) {
         try {
           const data = await fetchProductUpdates();
-          if (data.products.length > 0) {
+          if (data.products && data.products.length > 0) {
             await replaceAllProducts(data.products);
             await replaceAllCategories(data.categories);
             await replaceAllPaymentMethods(data.payment_methods);
@@ -78,8 +101,9 @@ export function POSPage() {
             cats = data.categories;
             methods = data.payment_methods.filter(m => m.is_active);
           }
-        } catch {
-          // Server not reachable — stay with empty local data
+        } catch (err) {
+          console.warn('Initial product fetch failed:', err);
+          setDownloadError(err instanceof Error ? err.message : 'Failed to reach server');
         }
       }
 
@@ -479,6 +503,17 @@ export function POSPage() {
             <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-success-500' : 'bg-danger-500'}`} />
             {isOnline ? 'Online' : 'Offline'}
           </div>
+          {/* Refresh products from server */}
+          <button
+            onClick={handleDownloadProducts}
+            disabled={syncingProducts}
+            title="Download latest menu from server"
+            className="p-1.5 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-800 transition-colors"
+          >
+            <svg className={`w-4 h-4 ${syncingProducts ? 'animate-spin text-primary-400' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
           {/* Pending sync badge */}
           {pendingCount > 0 && (
             <button onClick={performSync} className="flex items-center gap-1 px-2 py-1 rounded-full bg-warning-500/20 text-warning-500 text-xs font-medium animate-pulse">
@@ -534,11 +569,40 @@ export function POSPage() {
       {/* Product grid */}
       <div className="flex-1 overflow-y-auto px-4 py-3 pb-24">
         {filteredProducts.length === 0 ? (
-          <div className="text-center py-12">
-            <span className="text-4xl mb-3 block">🔍</span>
-            <p className="text-surface-300">No products found</p>
-            {products.length === 0 && (
-              <p className="text-surface-500 text-sm mt-2">Sync with server to load products</p>
+          <div className="text-center py-12 px-4">
+            <span className="text-4xl mb-3 block">📦</span>
+            <p className="text-surface-200 font-semibold text-lg">
+              {searchQuery ? 'No products match search' : 'No products loaded yet'}
+            </p>
+            {products.length === 0 ? (
+              <>
+                <p className="text-surface-400 text-sm mt-1 max-w-xs mx-auto">
+                  Download your menu from the laptop to use this POS offline.
+                </p>
+                <button
+                  onClick={handleDownloadProducts}
+                  disabled={syncingProducts}
+                  className="mt-4 px-6 py-3 rounded-xl bg-primary-600 text-white font-medium hover:bg-primary-500 transition-all flex items-center justify-center gap-2 mx-auto disabled:opacity-50"
+                >
+                  {syncingProducts ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Downloading...
+                    </>
+                  ) : (
+                    <>
+                      <span>🔄</span> Download Menu & Products
+                    </>
+                  )}
+                </button>
+                {downloadError && (
+                  <p className="text-danger-400 text-xs mt-3 bg-danger-500/10 py-2 px-3 rounded-lg border border-danger-500/20 max-w-xs mx-auto">
+                    {downloadError}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-surface-500 text-sm mt-2">Try clearing search or filters</p>
             )}
           </div>
         ) : (

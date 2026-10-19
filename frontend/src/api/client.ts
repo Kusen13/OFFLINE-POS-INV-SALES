@@ -6,6 +6,8 @@
  * In production, the API is at the same origin.
  */
 
+import { generateUUID } from '../utils/uuid';
+
 const API_BASE = '/api';
 const DEFAULT_TIMEOUT = 15000; // 15 seconds
 
@@ -34,7 +36,7 @@ interface RequestOptions {
 function getDeviceId(): string {
   let deviceId = localStorage.getItem('pos_device_id');
   if (!deviceId) {
-    deviceId = `device-${crypto.randomUUID().slice(0, 8)}`;
+    deviceId = `device-${generateUUID().slice(0, 8)}`;
     localStorage.setItem('pos_device_id', deviceId);
   }
   return deviceId;
