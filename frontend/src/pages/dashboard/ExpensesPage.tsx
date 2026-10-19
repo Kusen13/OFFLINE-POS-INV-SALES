@@ -62,7 +62,7 @@ export function ExpensesPage() {
     }
   }
 
-  const totalAmount = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalAmount = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col space-y-4 animate-fade-in">

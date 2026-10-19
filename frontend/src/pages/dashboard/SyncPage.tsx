@@ -52,7 +52,7 @@ export function SyncPage() {
     setTimeout(() => setActionMsg(''), 3000);
   }
 
-  const totalPendingAmount = sales.filter(s => s.sync_status === 'PENDING').reduce((sum, s) => sum + s.total_amount, 0);
+  const totalPendingAmount = sales.filter(s => s.sync_status === 'PENDING').reduce((sum, s) => sum + (Number(s.total_amount) || 0), 0);
 
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">

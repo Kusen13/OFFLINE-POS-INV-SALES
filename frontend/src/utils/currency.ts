@@ -7,8 +7,10 @@ const DEFAULT_CURRENCY = '₱';
 /**
  * Format a number as currency
  */
-export function formatCurrency(amount: number, symbol: string = DEFAULT_CURRENCY): string {
-  return `${symbol}${amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+export function formatCurrency(amount: number | string | null | undefined, symbol: string = DEFAULT_CURRENCY): string {
+  const num = typeof amount === 'number' ? amount : parseFloat(String(amount ?? 0));
+  const validNum = isNaN(num) ? 0 : num;
+  return `${symbol}${validNum.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
 }
 
 /**
