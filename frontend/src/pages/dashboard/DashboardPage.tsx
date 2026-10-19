@@ -1,17 +1,19 @@
 /**
- * Dashboard Page - Live business overview with metrics, charts, and quick actions
+ * Dashboard Page - Business overview with metrics, charts, and quick actions
  */
 
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { fetchDashboardSummary, fetchLowStockProducts } from '../../api/endpoints';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { fetchDashboardSummary, fetchLowStockProducts, fetchDailyReport } from '../../api/endpoints';
 import { formatCurrency } from '../../utils/currency';
 import { useSyncStore } from '../../features/sync/syncStore';
-import type { DashboardSummary } from '../../types/common';
+import type { DashboardSummary, DailyReport } from '../../types/common';
 import type { Product } from '../../types/product';
 
 export function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [dailyReport, setDailyReport] = useState<DailyReport | null>(null);
   const [lowStock, setLowStock] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -25,12 +27,14 @@ export function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const [summaryRes, lowStockRes] = await Promise.all([
+      const [summaryRes, lowStockRes, dailyRes] = await Promise.all([
         fetchDashboardSummary(),
         fetchLowStockProducts(),
+        fetchDailyReport(),
       ]);
       setSummary(summaryRes.data);
       setLowStock(lowStockRes.data);
+      setDailyReport(dailyRes.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard');
     } finally {
@@ -65,6 +69,13 @@ export function DashboardPage() {
   }
 
   const s = summary!;
+
+  // Prepare hourly data for chart
+  const hourlyData = dailyReport?.hourly?.map(h => ({
+    hour: `${h.hour}:00`,
+    sales: h.sales,
+    transactions: h.transactions,
+  })) ?? [];
 
   return (
     <div className="space-y-6 animate-fade-in pb-20 lg:pb-0">
@@ -116,7 +127,35 @@ export function DashboardPage() {
         />
       </div>
 
-      {/* Quick status + actions */}
+      {/* Sales chart */}
+      {hourlyData.length > 0 && (
+        <div className="bg-surface-800/50 rounded-xl p-5 border border-surface-700/50">
+          <h3 className="text-sm font-semibold text-surface-300 uppercase tracking-wider mb-4">Today's Sales by Hour</h3>
+          <div className="h-[220px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={hourlyData}>
+                <defs>
+                  <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis dataKey="hour" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={{ stroke: '#475569' }} tickLine={false} />
+                <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={{ stroke: '#475569' }} tickLine={false} tickFormatter={(v: number) => `₱${v}`} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#e2e8f0' }}
+                  formatter={(value: unknown) => [formatCurrency(Number(value)), 'Sales']}
+                  labelStyle={{ color: '#94a3b8' }}
+                />
+                <Area type="monotone" dataKey="sales" stroke="#3b82f6" strokeWidth={2} fill="url(#salesGradient)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Quick status + actions + low stock */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Sync status */}
         <div className="bg-surface-800/50 rounded-xl p-5 border border-surface-700/50">
@@ -190,23 +229,30 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {/* Recent activity placeholder */}
-      <div className="bg-surface-800/50 rounded-xl p-6 border border-surface-700/50">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-surface-100">Recent Sales</h3>
-          <Link to="/sales" className="text-primary-400 text-sm hover:text-primary-300 transition-colors">View All →</Link>
-        </div>
-        {s.today.transactions === 0 ? (
-          <div className="text-center py-8">
-            <span className="text-4xl mb-3 block">📋</span>
-            <p className="text-surface-400">No sales today yet. Start selling from the POS!</p>
+      {/* Daily summary stats */}
+      {dailyReport && (
+        <div className="bg-surface-800/50 rounded-xl p-5 border border-surface-700/50">
+          <h3 className="text-sm font-semibold text-surface-300 uppercase tracking-wider mb-4">Today's Summary</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="text-center">
+              <p className="text-surface-400 text-xs">Transactions</p>
+              <p className="text-surface-100 text-xl font-bold mt-1">{dailyReport.total_transactions}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-surface-400 text-xs">Revenue</p>
+              <p className="text-primary-400 text-xl font-bold mt-1">{formatCurrency(dailyReport.total_sales)}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-surface-400 text-xs">Avg Transaction</p>
+              <p className="text-surface-100 text-xl font-bold mt-1">{formatCurrency(dailyReport.avg_transaction)}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-surface-400 text-xs">Gross Profit</p>
+              <p className="text-success-500 text-xl font-bold mt-1">{formatCurrency(dailyReport.gross_profit)}</p>
+            </div>
           </div>
-        ) : (
-          <p className="text-surface-400">
-            {s.today.transactions} sale(s) today totaling {formatCurrency(s.today.sales)}
-          </p>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -5,6 +5,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchProducts, fetchCategories, createProduct, updateProduct, deleteProduct } from '../../api/endpoints';
 import { formatCurrency } from '../../utils/currency';
+import { getTodayStr } from '../../utils/date';
+import { exportToCSV, formatProductsForCSV } from '../../utils/csv';
 import type { Product, Category, ProductFormData } from '../../types/product';
 
 interface ProductFilters {
@@ -95,13 +97,24 @@ export function ProductsPage() {
           <h1 className="text-2xl font-bold text-surface-50">Products</h1>
           <p className="text-surface-400 mt-1">{pagination.total} products in catalog</p>
         </div>
-        <button
-          onClick={() => { setEditingProduct(null); setShowForm(true); }}
-          className="px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-2"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-          Add Product
-        </button>
+        <div className="flex gap-2">
+          {products.length > 0 && (
+            <button
+              onClick={() => exportToCSV(formatProductsForCSV(products), `products_export_${getTodayStr()}`)}
+              className="px-4 py-2.5 rounded-xl bg-surface-700 text-surface-200 text-sm font-medium hover:bg-surface-600 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+              CSV
+            </button>
+          )}
+          <button
+            onClick={() => { setEditingProduct(null); setShowForm(true); }}
+            className="px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+            Add Product
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
