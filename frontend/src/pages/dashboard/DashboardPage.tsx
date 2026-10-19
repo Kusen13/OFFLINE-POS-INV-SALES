@@ -155,8 +155,8 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* Quick status + actions + low stock */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Quick status + low stock */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Sync status */}
         <div className="bg-surface-800/50 rounded-xl p-5 border border-surface-700/50">
           <h3 className="text-sm font-semibold text-surface-300 uppercase tracking-wider mb-4">Sync Status</h3>
@@ -171,25 +171,6 @@ export function DashboardPage() {
             </div>
             <Link to="/sync" className="block mt-3 px-4 py-2 rounded-lg bg-surface-700 text-surface-200 text-sm text-center hover:bg-surface-600 transition-colors">
               View Sync Details
-            </Link>
-          </div>
-        </div>
-
-        {/* Quick actions */}
-        <div className="bg-surface-800/50 rounded-xl p-5 border border-surface-700/50">
-          <h3 className="text-sm font-semibold text-surface-300 uppercase tracking-wider mb-4">Quick Actions</h3>
-          <div className="grid grid-cols-2 gap-2">
-            <Link to="/pos" className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-primary-600/20 text-primary-400 text-sm font-medium hover:bg-primary-600/30 transition-colors border border-primary-600/20">
-              🛒 New Sale
-            </Link>
-            <Link to="/products" className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-surface-700/50 text-surface-200 text-sm font-medium hover:bg-surface-700 transition-colors border border-surface-700/50">
-              📦 Products
-            </Link>
-            <Link to="/inventory" className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-surface-700/50 text-surface-200 text-sm font-medium hover:bg-surface-700 transition-colors border border-surface-700/50">
-              📋 Inventory
-            </Link>
-            <Link to="/expenses" className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-surface-700/50 text-surface-200 text-sm font-medium hover:bg-surface-700 transition-colors border border-surface-700/50">
-              💸 Expenses
             </Link>
           </div>
         </div>
