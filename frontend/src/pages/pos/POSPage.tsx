@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { MobileDrawer } from '../../components/layout/MobileDrawer';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { useCartStore } from '../../features/cart/cartStore';
 import { useSyncStore } from '../../features/sync/syncStore';
@@ -42,6 +43,7 @@ export function POSPage() {
   const [loading, setLoading] = useState(true);
   const [syncingProducts, setSyncingProducts] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [lastReceipt, setLastReceipt] = useState<PendingSale | null>(null);
 
   // Checkout state
@@ -489,11 +491,25 @@ export function POSPage() {
   // ============================================================
   return (
     <div className="min-h-dvh bg-surface-950 flex flex-col">
+      {/* Mobile navigation drawer */}
+      <MobileDrawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
+
       {/* Top bar */}
-      <header className="flex items-center gap-3 px-4 py-3 bg-surface-900 border-b border-surface-700/50">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white font-bold text-sm">P</div>
-        <div className="flex-1">
-          <h1 className="text-base font-bold text-surface-50">Point of Sale</h1>
+      <header className="flex items-center gap-2.5 px-3.5 py-2.5 bg-surface-900 border-b border-surface-700/50">
+        {/* Burger Button */}
+        <button
+          onClick={() => setDrawerOpen(true)}
+          className="p-2 -ml-1 rounded-xl text-surface-200 hover:text-white hover:bg-surface-800 transition-colors active:scale-95 shrink-0"
+          aria-label="Open navigation menu"
+          title="Open Menu"
+        >
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+
+        <div className="flex-1 min-w-0">
+          <h1 className="text-base font-bold text-surface-50 truncate">Point of Sale</h1>
         </div>
         <div className="flex items-center gap-2">
           {/* Online/offline indicator */}
