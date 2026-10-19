@@ -66,8 +66,11 @@ export function ExpensesPage() {
 
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-surface-400">{pagination.total} records • Total: {formatCurrency(totalAmount)}</span>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-surface-50">Expenses</h1>
+          <p className="text-surface-400 mt-1">{pagination.total} records • Total: {formatCurrency(totalAmount)}</p>
+        </div>
         <button
           onClick={() => { setEditing(null); setShowForm(true); }}
           className="px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-2"

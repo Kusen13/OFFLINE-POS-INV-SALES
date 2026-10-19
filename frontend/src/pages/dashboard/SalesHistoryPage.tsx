@@ -50,8 +50,11 @@ export function SalesHistoryPage() {
 
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-surface-400">{pagination.total} transactions</span>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-surface-50">Sales History</h1>
+          <p className="text-surface-400 mt-1">{pagination.total} transactions</p>
+        </div>
         {sales.length > 0 && (
           <button
             onClick={() => exportToCSV(formatSalesForCSV(sales), `sales_export_${getTodayStr()}`)}

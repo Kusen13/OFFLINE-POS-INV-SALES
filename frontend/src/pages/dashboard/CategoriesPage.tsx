@@ -55,7 +55,10 @@ export function CategoriesPage() {
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
       <div className="flex items-center justify-between">
-        <span className="text-sm text-surface-400">{categories.length} categories</span>
+        <div>
+          <h1 className="text-2xl font-bold text-surface-50">Categories</h1>
+          <p className="text-surface-400 mt-1">{categories.length} categories</p>
+        </div>
         <button
           onClick={() => { setEditing(null); setShowForm(true); }}
           className="px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-2"

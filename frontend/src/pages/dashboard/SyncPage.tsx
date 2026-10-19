@@ -56,6 +56,10 @@ export function SyncPage() {
 
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
+      <div>
+        <h1 className="text-2xl font-bold text-surface-50">Sync Center</h1>
+        <p className="text-surface-400 mt-1">Manage offline sales synchronization</p>
+      </div>
 
       {/* Connection status */}
       <div className={`rounded-xl p-4 border flex items-center gap-3 ${

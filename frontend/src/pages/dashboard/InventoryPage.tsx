@@ -43,6 +43,10 @@ export function InventoryPage() {
 
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
+      <div>
+        <h1 className="text-2xl font-bold text-surface-50">Inventory</h1>
+        <p className="text-surface-400 mt-1">Stock levels and adjustments</p>
+      </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">

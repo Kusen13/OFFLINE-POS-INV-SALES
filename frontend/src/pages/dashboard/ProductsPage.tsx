@@ -93,8 +93,11 @@ export function ProductsPage() {
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
       {/* Header */}
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-surface-400">{pagination.total} products in catalog</span>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-surface-50">Products</h1>
+          <p className="text-surface-400 mt-1">{pagination.total} products in catalog</p>
+        </div>
         <div className="flex gap-2">
           {products.length > 0 && (
             <button

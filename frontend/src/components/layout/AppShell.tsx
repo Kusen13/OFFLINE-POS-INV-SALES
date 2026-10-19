@@ -91,30 +91,17 @@ export function AppShell() {
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top header */}
-        <header className="flex items-center gap-4 px-4 py-3 bg-surface-900/80 border-b border-surface-700/50 lg:px-6">
-          {/* Mobile menu button */}
+        {/* Mobile menu button header - hidden on desktop */}
+        <header className="flex items-center px-4 py-2.5 bg-surface-900 border-b border-surface-700/50 lg:hidden">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="p-2 rounded-lg text-surface-300 hover:bg-surface-800 hover:text-surface-100 lg:hidden"
+            className="p-2 -ml-1 rounded-xl text-surface-300 hover:bg-surface-800 hover:text-surface-100"
             aria-label="Open menu"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-
-          {/* Page title from route */}
-          <h2 className="text-lg font-semibold text-surface-100 truncate">
-            {navItems.find(n => n.path === location.pathname)?.label || 'Dashboard'}
-          </h2>
-
-          <div className="flex-1" />
-
-          {/* Sync status badge (desktop header) */}
-          <div className="hidden sm:block">
-            <SyncStatusBar />
-          </div>
         </header>
 
         {/* Page content */}
