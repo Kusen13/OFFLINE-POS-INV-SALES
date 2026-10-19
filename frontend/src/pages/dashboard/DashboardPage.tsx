@@ -80,10 +80,7 @@ export function DashboardPage() {
   return (
     <div className="space-y-6 animate-fade-in pb-20 lg:pb-0">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-50">Dashboard</h1>
-          <p className="text-surface-400 mt-1">Business overview and key metrics</p>
-        </div>
+        <span className="text-sm text-surface-400">Overview and key business metrics</span>
         <button onClick={loadDashboard} className="p-2 rounded-lg text-surface-400 hover:bg-surface-800 hover:text-surface-200 transition-colors" title="Refresh">
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />

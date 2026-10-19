@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { fetchExpenses, createExpense, updateExpense, deleteExpense } from '../../api/endpoints';
 import { formatCurrency } from '../../utils/currency';
 import { formatDate, getTodayStr } from '../../utils/date';
@@ -65,11 +66,8 @@ export function ExpensesPage() {
 
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-50">Expenses</h1>
-          <p className="text-surface-400 mt-1">{pagination.total} records • Total: {formatCurrency(totalAmount)}</p>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-surface-400">{pagination.total} records • Total: {formatCurrency(totalAmount)}</span>
         <button
           onClick={() => { setEditing(null); setShowForm(true); }}
           className="px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-2"
@@ -154,7 +152,7 @@ export function ExpensesPage() {
       )}
 
       {/* Delete confirm */}
-      {deleteConfirm && (
+      {deleteConfirm && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-surface-800 rounded-2xl p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in">
             <h3 className="text-lg font-bold text-surface-100 mb-2">Delete Expense?</h3>
@@ -164,7 +162,8 @@ export function ExpensesPage() {
               <button onClick={handleDelete} className="flex-1 px-4 py-2.5 rounded-xl bg-danger-600 text-white text-sm font-medium hover:bg-danger-500 transition-colors">Delete</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -198,7 +197,7 @@ function ExpenseFormModal({ expense, onSave, onClose }: {
     }
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="bg-surface-800 rounded-2xl p-6 max-w-md w-full border border-surface-700 shadow-2xl animate-fade-in">
         <h3 className="text-lg font-bold text-surface-100 mb-5">{expense ? 'Edit Expense' : 'New Expense'}</h3>
@@ -232,6 +231,7 @@ function ExpenseFormModal({ expense, onSave, onClose }: {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

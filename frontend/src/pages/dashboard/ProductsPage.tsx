@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { fetchProducts, fetchCategories, createProduct, updateProduct, deleteProduct } from '../../api/endpoints';
 import { formatCurrency } from '../../utils/currency';
 import { getTodayStr } from '../../utils/date';
@@ -92,11 +93,8 @@ export function ProductsPage() {
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-50">Products</h1>
-          <p className="text-surface-400 mt-1">{pagination.total} products in catalog</p>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-surface-400">{pagination.total} products in catalog</span>
         <div className="flex gap-2">
           {products.length > 0 && (
             <button
@@ -302,7 +300,7 @@ export function ProductsPage() {
       )}
 
       {/* Delete confirmation modal */}
-      {deleteConfirm && (
+      {deleteConfirm && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-surface-800 rounded-2xl p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in">
             <h3 className="text-lg font-bold text-surface-100 mb-2">Delete Product?</h3>
@@ -314,7 +312,8 @@ export function ProductsPage() {
               <button onClick={handleDelete} className="flex-1 px-4 py-2.5 rounded-xl bg-danger-600 text-white text-sm font-medium hover:bg-danger-500 transition-colors">Delete</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -361,9 +360,9 @@ function ProductFormModal({ product, categories, onSave, onClose }: {
     }
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[10vh] bg-black/60 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-surface-800 rounded-2xl p-6 max-w-lg w-full border border-surface-700 shadow-2xl animate-fade-in">
+      <div className="bg-surface-800 rounded-2xl p-6 max-w-lg w-full border border-surface-700 shadow-2xl animate-fade-in my-auto">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-bold text-surface-100">{product ? 'Edit Product' : 'New Product'}</h3>
           <button onClick={onClose} className="p-1 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-700">
@@ -428,7 +427,8 @@ function ProductFormModal({ product, categories, onSave, onClose }: {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

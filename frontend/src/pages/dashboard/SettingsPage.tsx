@@ -70,10 +70,6 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6 animate-fade-in pb-20 lg:pb-0 max-w-2xl">
-      <div>
-        <h1 className="text-2xl font-bold text-surface-50">Settings</h1>
-        <p className="text-surface-400 mt-1">Configure your POS system</p>
-      </div>
 
       {/* Store Settings */}
       <section className="bg-surface-800/50 rounded-xl border border-surface-700/50 divide-y divide-surface-700/30">

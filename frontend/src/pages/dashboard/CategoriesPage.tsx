@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { fetchCategories, createCategory, updateCategory, deleteCategory } from '../../api/endpoints';
 import type { Category } from '../../types/product';
 
@@ -54,10 +55,7 @@ export function CategoriesPage() {
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-50">Categories</h1>
-          <p className="text-surface-400 mt-1">{categories.length} categories</p>
-        </div>
+        <span className="text-sm text-surface-400">{categories.length} categories</span>
         <button
           onClick={() => { setEditing(null); setShowForm(true); }}
           className="px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-2"
@@ -114,7 +112,7 @@ export function CategoriesPage() {
       )}
 
       {/* Delete confirmation */}
-      {deleteConfirm && (
+      {deleteConfirm && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-surface-800 rounded-2xl p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in">
             <h3 className="text-lg font-bold text-surface-100 mb-2">Delete Category?</h3>
@@ -126,7 +124,8 @@ export function CategoriesPage() {
               <button onClick={handleDelete} className="flex-1 px-4 py-2.5 rounded-xl bg-danger-600 text-white text-sm font-medium hover:bg-danger-500 transition-colors">Delete</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -157,7 +156,7 @@ function CategoryFormModal({ category, onSave, onClose }: {
     }
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="bg-surface-800 rounded-2xl p-6 max-w-md w-full border border-surface-700 shadow-2xl animate-fade-in">
         <h3 className="text-lg font-bold text-surface-100 mb-5">{category ? 'Edit Category' : 'New Category'}</h3>
@@ -183,6 +182,7 @@ function CategoryFormModal({ category, onSave, onClose }: {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { fetchInventory, fetchCategories, createStockAdjustment } from '../../api/endpoints';
 import { formatCurrency } from '../../utils/currency';
 import type { InventoryItem } from '../../types/inventory';
@@ -42,10 +43,6 @@ export function InventoryPage() {
 
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
-      <div>
-        <h1 className="text-2xl font-bold text-surface-50">Inventory</h1>
-        <p className="text-surface-400 mt-1">Stock levels and adjustments</p>
-      </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
@@ -209,7 +206,7 @@ function StockAdjustModal({ item, onClose, onSaved }: {
     }
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="bg-surface-800 rounded-2xl p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in">
         <h3 className="text-lg font-bold text-surface-100 mb-1">Adjust Stock</h3>
@@ -239,6 +236,7 @@ function StockAdjustModal({ item, onClose, onSaved }: {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

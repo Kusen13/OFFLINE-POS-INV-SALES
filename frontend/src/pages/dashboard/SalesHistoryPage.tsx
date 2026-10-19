@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { fetchSales, fetchSaleDetail } from '../../api/endpoints';
 import { formatCurrency } from '../../utils/currency';
 import { formatDateTime, getTodayStr } from '../../utils/date';
@@ -49,11 +50,8 @@ export function SalesHistoryPage() {
 
   return (
     <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-50">Sales History</h1>
-          <p className="text-surface-400 mt-1">{pagination.total} transactions</p>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-surface-400">{pagination.total} transactions</span>
         {sales.length > 0 && (
           <button
             onClick={() => exportToCSV(formatSalesForCSV(sales), `sales_export_${getTodayStr()}`)}
@@ -177,7 +175,7 @@ export function SalesHistoryPage() {
       )}
 
       {/* Sale detail modal */}
-      {selectedSale && (
+      {selectedSale && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-surface-800 rounded-2xl p-6 max-w-md w-full border border-surface-700 shadow-2xl animate-fade-in max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
@@ -253,7 +251,8 @@ export function SalesHistoryPage() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
