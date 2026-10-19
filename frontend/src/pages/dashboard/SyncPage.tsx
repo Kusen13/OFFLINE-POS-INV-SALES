@@ -1,105 +1,184 @@
 /**
- * Sync Page - Sync history, status, and controls
+ * Sync Page - Manual sync control for offline sales
  */
 
+import { useState, useEffect } from 'react';
 import { useSyncStore } from '../../features/sync/syncStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { getAllSales, resetFailedSales, cleanupOldSyncedSales } from '../../db/salesRepository';
+import { formatCurrency } from '../../utils/currency';
+import { formatDateTime, getRelativeTime } from '../../utils/date';
+import type { PendingSale } from '../../types/sale';
 
 export function SyncPage() {
   const isOnline = useOnlineStatus();
-  const {
-    pendingCount, syncedCount, failedCount,
-    isSyncing, serverReachable, syncProgress, lastError,
-    performSync, retryFailed, checkServer, lastSyncTime,
-  } = useSyncStore();
+  const { pendingCount, failedCount, syncedCount, isSyncing: syncing, lastSyncTime, lastError: lastSyncError, performSync, refreshCounts } = useSyncStore();
+  const [sales, setSales] = useState<PendingSale[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionMsg, setActionMsg] = useState('');
+
+  useEffect(() => {
+    loadSales();
+  }, [pendingCount, failedCount, syncedCount]);
+
+  async function loadSales() {
+    setLoading(true);
+    try {
+      const all = await getAllSales();
+      setSales(all);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSync() {
+    await performSync();
+    await loadSales();
+  }
+
+  async function handleRetryFailed() {
+    const count = await resetFailedSales();
+    setActionMsg(`${count} failed sale(s) reset to pending`);
+    await refreshCounts();
+    await loadSales();
+    setTimeout(() => setActionMsg(''), 3000);
+  }
+
+  async function handleCleanup() {
+    const count = await cleanupOldSyncedSales(30);
+    setActionMsg(`${count} old synced sale(s) cleaned up`);
+    await refreshCounts();
+    await loadSales();
+    setTimeout(() => setActionMsg(''), 3000);
+  }
+
+  const totalPendingAmount = sales.filter(s => s.sync_status === 'PENDING').reduce((sum, s) => sum + s.total_amount, 0);
 
   return (
-    <div className="space-y-6 animate-fade-in pb-20 lg:pb-0">
+    <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
       <div>
-        <h1 className="text-2xl font-bold text-surface-50">Synchronization</h1>
-        <p className="text-surface-400 mt-1">Manage data sync between devices and server</p>
-      </div>
-
-      {/* Status overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-warning-500/10 rounded-xl p-5 border border-warning-500/20">
-          <p className="text-3xl font-bold text-warning-500">{pendingCount}</p>
-          <p className="text-sm text-surface-300 mt-1">Pending Sales</p>
-        </div>
-        <div className="bg-success-500/10 rounded-xl p-5 border border-success-500/20">
-          <p className="text-3xl font-bold text-success-500">{syncedCount}</p>
-          <p className="text-sm text-surface-300 mt-1">Synced Sales</p>
-        </div>
-        <div className="bg-danger-500/10 rounded-xl p-5 border border-danger-500/20">
-          <p className="text-3xl font-bold text-danger-500">{failedCount}</p>
-          <p className="text-sm text-surface-300 mt-1">Failed Sales</p>
-        </div>
+        <h1 className="text-2xl font-bold text-surface-50">Sync Center</h1>
+        <p className="text-surface-400 mt-1">Manage offline sales synchronization</p>
       </div>
 
       {/* Connection status */}
-      <div className="bg-surface-800/50 rounded-xl p-5 border border-surface-700/50 space-y-4">
-        <h3 className="text-lg font-semibold text-surface-100">Connection Status</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="flex items-center gap-3">
-            <span className={`w-3 h-3 rounded-full ${isOnline ? 'bg-success-500' : 'bg-danger-500'}`} />
-            <span className="text-surface-200">Network: {isOnline ? 'Connected' : 'Disconnected'}</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className={`w-3 h-3 rounded-full ${serverReachable ? 'bg-success-500' : 'bg-surface-500'}`} />
-            <span className="text-surface-200">Server: {serverReachable ? 'Reachable' : 'Unknown'}</span>
-          </div>
+      <div className={`rounded-xl p-4 border flex items-center gap-3 ${
+        isOnline ? 'bg-success-500/10 border-success-500/30' : 'bg-danger-500/10 border-danger-500/30'
+      }`}>
+        <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-success-500 animate-pulse' : 'bg-danger-500'}`} />
+        <div>
+          <p className={`font-medium text-sm ${isOnline ? 'text-success-500' : 'text-danger-500'}`}>
+            {isOnline ? 'Connected to Server' : 'Offline — Sales are saved locally'}
+          </p>
+          {lastSyncTime && (
+            <p className="text-surface-400 text-xs mt-0.5">Last sync: {getRelativeTime(lastSyncTime)}</p>
+          )}
         </div>
-        {lastSyncTime && (
-          <p className="text-xs text-surface-400">Last sync: {new Date(lastSyncTime).toLocaleString()}</p>
-        )}
       </div>
 
-      {/* Error display */}
-      {lastError && (
+      {/* Status cards */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-warning-500/10 rounded-xl p-4 border border-warning-500/20 text-center">
+          <p className="text-3xl font-bold text-warning-500">{pendingCount}</p>
+          <p className="text-surface-400 text-xs mt-1">Pending</p>
+          {totalPendingAmount > 0 && (
+            <p className="text-warning-500 text-xs font-medium mt-0.5">{formatCurrency(totalPendingAmount)}</p>
+          )}
+        </div>
+        <div className="bg-danger-500/10 rounded-xl p-4 border border-danger-500/20 text-center">
+          <p className="text-3xl font-bold text-danger-500">{failedCount}</p>
+          <p className="text-surface-400 text-xs mt-1">Failed</p>
+        </div>
+        <div className="bg-success-500/10 rounded-xl p-4 border border-success-500/20 text-center">
+          <p className="text-3xl font-bold text-success-500">{syncedCount}</p>
+          <p className="text-surface-400 text-xs mt-1">Synced</p>
+        </div>
+      </div>
+
+      {/* Sync button */}
+      <button
+        onClick={handleSync}
+        disabled={syncing || pendingCount === 0}
+        className="w-full py-4 rounded-xl bg-primary-600 text-white text-lg font-bold hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-[0.98] shadow-lg shadow-primary-600/20 flex items-center justify-center gap-2"
+      >
+        {syncing ? (
+          <>
+            <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            Syncing...
+          </>
+        ) : (
+          <>🔄 Sync {pendingCount} Pending Sale{pendingCount !== 1 ? 's' : ''}</>
+        )}
+      </button>
+
+      {/* Error message */}
+      {lastSyncError && (
         <div className="bg-danger-500/10 border border-danger-500/30 rounded-xl p-4">
-          <p className="text-danger-500 text-sm font-medium">⚠️ {lastError}</p>
+          <p className="text-danger-500 text-sm">⚠️ {lastSyncError}</p>
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex flex-wrap gap-3">
-        <button
-          onClick={performSync}
-          disabled={isSyncing}
-          className="px-6 py-3 rounded-xl bg-primary-600 text-white font-medium hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-        >
-          {isSyncing ? (
-            <>
-              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              {syncProgress || 'Syncing...'}
-            </>
-          ) : (
-            <>🔄 Sync Now</>
-          )}
-        </button>
+      {/* Action message */}
+      {actionMsg && (
+        <div className="bg-primary-500/10 border border-primary-500/30 rounded-xl p-3 text-primary-400 text-sm text-center">
+          {actionMsg}
+        </div>
+      )}
 
-        <button
-          onClick={checkServer}
-          className="px-6 py-3 rounded-xl bg-surface-700 text-surface-200 font-medium hover:bg-surface-600 transition-colors"
-        >
-          🔍 Check Server
-        </button>
-
+      {/* Action buttons */}
+      <div className="flex gap-3">
         {failedCount > 0 && (
-          <button
-            onClick={retryFailed}
-            disabled={isSyncing}
-            className="px-6 py-3 rounded-xl bg-warning-600 text-white font-medium hover:bg-warning-500 disabled:opacity-50 transition-colors"
-          >
-            🔁 Retry Failed ({failedCount})
+          <button onClick={handleRetryFailed} className="flex-1 px-4 py-2.5 rounded-xl bg-warning-600/20 text-warning-500 text-sm font-medium border border-warning-500/30 hover:bg-warning-600/30 transition-colors">
+            🔄 Retry {failedCount} Failed
+          </button>
+        )}
+        {syncedCount > 0 && (
+          <button onClick={handleCleanup} className="flex-1 px-4 py-2.5 rounded-xl bg-surface-700 text-surface-300 text-sm font-medium hover:bg-surface-600 transition-colors">
+            🗑️ Cleanup Old Synced
           </button>
         )}
       </div>
 
-      {/* Sync log placeholder */}
-      <div className="bg-surface-800/50 rounded-xl p-6 border border-surface-700/50">
-        <h3 className="text-lg font-semibold text-surface-100 mb-4">Sync History</h3>
-        <p className="text-surface-400 text-sm">Detailed sync logs will be shown here in Milestone 5.</p>
+      {/* Transaction log */}
+      <div className="bg-surface-800/50 rounded-xl border border-surface-700/50 overflow-hidden">
+        <div className="px-4 py-3 border-b border-surface-700/50">
+          <h3 className="text-sm font-semibold text-surface-300">Transaction Log ({sales.length})</h3>
+        </div>
+        {loading ? (
+          <div className="flex justify-center py-8"><div className="w-8 h-8 border-3 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" /></div>
+        ) : sales.length === 0 ? (
+          <div className="text-center py-8">
+            <span className="text-4xl mb-2 block">📋</span>
+            <p className="text-surface-400 text-sm">No offline sales recorded yet</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-surface-700/30 max-h-[400px] overflow-y-auto">
+            {sales.map(sale => (
+              <div key={sale.uuid} className="px-4 py-3 flex items-center gap-3">
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  sale.sync_status === 'SYNCED' ? 'bg-success-500' :
+                  sale.sync_status === 'FAILED' ? 'bg-danger-500' :
+                  'bg-warning-500 animate-pulse'
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-surface-200 text-sm font-mono">{sale.receipt_number}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                      sale.sync_status === 'SYNCED' ? 'bg-success-500/20 text-success-500' :
+                      sale.sync_status === 'FAILED' ? 'bg-danger-500/20 text-danger-500' :
+                      'bg-warning-500/20 text-warning-500'
+                    }`}>{sale.sync_status}</span>
+                  </div>
+                  <p className="text-surface-500 text-xs mt-0.5">
+                    {formatDateTime(sale.sold_at)} • {sale.items.length} items
+                    {sale.sync_error && <span className="text-danger-400"> — {sale.sync_error}</span>}
+                  </p>
+                </div>
+                <span className="text-surface-100 font-bold text-sm">{formatCurrency(sale.total_amount)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
