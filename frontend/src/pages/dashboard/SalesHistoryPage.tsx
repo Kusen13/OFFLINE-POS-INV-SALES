@@ -12,8 +12,8 @@ import type { Sale } from '../../types/sale';
 
 export function SalesHistoryPage() {
   const [sales, setSales] = useState<Sale[]>([]);
-  const [pagination, setPagination] = useState({ total: 0, page: 1, per_page: 20, total_pages: 0 });
-  const [filters, setFilters] = useState({ page: 1, per_page: 20, date_from: '', date_to: '' });
+  const [pagination, setPagination] = useState({ total: 0, page: 1, per_page: 15, total_pages: 0 });
+  const [filters, setFilters] = useState({ page: 1, per_page: 15, date_from: '', date_to: '' });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
@@ -49,56 +49,59 @@ export function SalesHistoryPage() {
   }
 
   return (
-    <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-50">Sales History</h1>
-          <p className="text-surface-400 mt-1">{pagination.total} transactions</p>
+    <div className="flex-1 min-h-0 flex flex-col space-y-4 animate-fade-in">
+      <div className="flex-shrink-0 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-surface-50">Sales History</h1>
+            <p className="text-surface-400 mt-0.5 text-sm">{pagination.total} transactions</p>
+          </div>
+          {sales.length > 0 && (
+            <button
+              onClick={() => exportToCSV(formatSalesForCSV(sales), `sales_export_${getTodayStr()}`)}
+              className="px-4 py-2 rounded-xl bg-surface-700 text-surface-200 text-sm font-medium hover:bg-surface-600 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+              Export CSV
+            </button>
+          )}
         </div>
-        {sales.length > 0 && (
-          <button
-            onClick={() => exportToCSV(formatSalesForCSV(sales), `sales_export_${getTodayStr()}`)}
-            className="px-4 py-2 rounded-xl bg-surface-700 text-surface-200 text-sm font-medium hover:bg-surface-600 transition-colors flex items-center gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-            Export CSV
-          </button>
-        )}
-      </div>
 
-      {/* Date filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="flex items-center gap-2 flex-1">
-          <label className="text-surface-400 text-sm whitespace-nowrap">From:</label>
-          <input type="date" value={filters.date_from} onChange={e => setFilters(f => ({ ...f, page: 1, date_from: e.target.value }))} className="form-input flex-1" />
-        </div>
-        <div className="flex items-center gap-2 flex-1">
-          <label className="text-surface-400 text-sm whitespace-nowrap">To:</label>
-          <input type="date" value={filters.date_to} onChange={e => setFilters(f => ({ ...f, page: 1, date_to: e.target.value }))} className="form-input flex-1" />
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setFilters(f => ({ ...f, page: 1, date_from: getTodayStr(), date_to: getTodayStr() }))}
-            className="px-3 py-2 rounded-xl bg-surface-700 text-surface-200 text-sm hover:bg-surface-600 transition-colors"
-          >
-            Today
-          </button>
-          <button
-            onClick={() => setFilters(f => ({ ...f, page: 1, date_from: '', date_to: '' }))}
-            className="px-3 py-2 rounded-xl bg-surface-700 text-surface-200 text-sm hover:bg-surface-600 transition-colors"
-          >
-            Clear
-          </button>
+        {/* Date filters */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex items-center gap-2 flex-1">
+            <label className="text-surface-400 text-sm whitespace-nowrap">From:</label>
+            <input type="date" value={filters.date_from} onChange={e => setFilters(f => ({ ...f, page: 1, date_from: e.target.value }))} className="form-input flex-1" />
+          </div>
+          <div className="flex items-center gap-2 flex-1">
+            <label className="text-surface-400 text-sm whitespace-nowrap">To:</label>
+            <input type="date" value={filters.date_to} onChange={e => setFilters(f => ({ ...f, page: 1, date_to: e.target.value }))} className="form-input flex-1" />
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setFilters(f => ({ ...f, page: 1, date_from: getTodayStr(), date_to: getTodayStr() }))}
+              className="px-3 py-2 rounded-xl bg-surface-700 text-surface-200 text-sm hover:bg-surface-600 transition-colors"
+            >
+              Today
+            </button>
+            <button
+              onClick={() => setFilters(f => ({ ...f, page: 1, date_from: '', date_to: '' }))}
+              className="px-3 py-2 rounded-xl bg-surface-700 text-surface-200 text-sm hover:bg-surface-600 transition-colors"
+            >
+              Clear
+            </button>
+          </div>
         </div>
       </div>
 
       {error && (
-        <div className="bg-danger-500/10 border border-danger-500/30 rounded-xl p-4">
+        <div className="flex-shrink-0 bg-danger-500/10 border border-danger-500/30 rounded-xl p-4">
           <p className="text-danger-500 text-sm">⚠️ {error}</p>
         </div>
       )}
 
-      <div className="bg-surface-800/50 rounded-xl border border-surface-700/50 overflow-hidden">
+      {/* Main Table Card */}
+      <div className="flex-1 min-h-0 bg-surface-800/50 rounded-xl border border-surface-700/50 flex flex-col overflow-hidden shadow-sm">
         {loading ? (
           <div className="flex justify-center py-12"><div className="w-8 h-8 border-3 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" /></div>
         ) : sales.length === 0 ? (
@@ -109,11 +112,13 @@ export function SalesHistoryPage() {
           </div>
         ) : (
           <>
-            {/* Desktop view */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-surface-700/50">
+            {/* Scrollable table rows container */}
+            <div className="flex-1 min-h-0 overflow-auto">
+              {/* Desktop view */}
+              <div className="hidden md:block">
+                <table className="w-full text-left">
+                  <thead className="sticky top-0 bg-surface-900 border-b border-surface-700/50 z-10 shadow-sm">
+                    <tr>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-surface-400 uppercase tracking-wider">Receipt</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-surface-400 uppercase tracking-wider">Date</th>
                     <th className="text-center px-4 py-3 text-xs font-semibold text-surface-400 uppercase tracking-wider">Items</th>
@@ -162,20 +167,33 @@ export function SalesHistoryPage() {
                 </button>
               ))}
             </div>
+          </div>
+
+            {/* Pinned Card Footer: Pagination */}
+            <div className="flex-shrink-0 px-4 py-3 bg-surface-900/60 border-t border-surface-700/50 flex items-center justify-between">
+              <p className="text-surface-400 text-xs sm:text-sm">
+                Page {pagination.page} of {pagination.total_pages || 1} <span className="hidden sm:inline">({pagination.total} transactions)</span>
+              </p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setFilters(f => ({ ...f, page: f.page - 1 }))}
+                  disabled={pagination.page <= 1}
+                  className="px-3 py-1.5 rounded-lg bg-surface-800 text-surface-300 text-xs sm:text-sm hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  ← Prev
+                </button>
+                <button
+                  onClick={() => setFilters(f => ({ ...f, page: f.page + 1 }))}
+                  disabled={pagination.page >= pagination.total_pages}
+                  className="px-3 py-1.5 rounded-lg bg-surface-800 text-surface-300 text-xs sm:text-sm hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
           </>
         )}
       </div>
-
-      {/* Pagination */}
-      {pagination.total_pages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-surface-400 text-sm">Page {pagination.page} of {pagination.total_pages}</p>
-          <div className="flex gap-1">
-            <button onClick={() => setFilters(f => ({ ...f, page: f.page - 1 }))} disabled={pagination.page <= 1} className="px-3 py-1.5 rounded-lg bg-surface-800 text-surface-300 text-sm hover:bg-surface-700 disabled:opacity-40 transition-colors">← Prev</button>
-            <button onClick={() => setFilters(f => ({ ...f, page: f.page + 1 }))} disabled={pagination.page >= pagination.total_pages} className="px-3 py-1.5 rounded-lg bg-surface-800 text-surface-300 text-sm hover:bg-surface-700 disabled:opacity-40 transition-colors">Next →</button>
-          </div>
-        </div>
-      )}
 
       {/* Sale detail modal */}
       {selectedSale && createPortal(

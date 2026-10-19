@@ -20,8 +20,8 @@ interface ProductFilters {
 export function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [pagination, setPagination] = useState({ total: 0, page: 1, per_page: 20, total_pages: 0 });
-  const [filters, setFilters] = useState<ProductFilters>({ page: 1, per_page: 20, search: '', category_id: undefined });
+  const [pagination, setPagination] = useState({ total: 0, page: 1, per_page: 15, total_pages: 0 });
+  const [filters, setFilters] = useState<ProductFilters>({ page: 1, per_page: 15, search: '', category_id: undefined });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -91,57 +91,59 @@ export function ProductsPage() {
   }
 
   return (
-    <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-50">Products</h1>
-          <p className="text-surface-400 mt-1">{pagination.total} products in catalog</p>
-        </div>
-        <div className="flex gap-2">
-          {products.length > 0 && (
+    <div className="flex-1 min-h-0 flex flex-col space-y-4 animate-fade-in">
+      <div className="flex-shrink-0 space-y-3">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-surface-50">Products</h1>
+            <p className="text-surface-400 mt-1">{pagination.total} products in catalog</p>
+          </div>
+          <div className="flex gap-2">
+            {products.length > 0 && (
+              <button
+                onClick={() => exportToCSV(formatProductsForCSV(products), `products_export_${getTodayStr()}`)}
+                className="px-4 py-2.5 rounded-xl bg-surface-700 text-surface-200 text-sm font-medium hover:bg-surface-600 transition-colors flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                CSV
+              </button>
+            )}
             <button
-              onClick={() => exportToCSV(formatProductsForCSV(products), `products_export_${getTodayStr()}`)}
-              className="px-4 py-2.5 rounded-xl bg-surface-700 text-surface-200 text-sm font-medium hover:bg-surface-600 transition-colors flex items-center gap-2"
+              onClick={() => { setEditingProduct(null); setShowForm(true); }}
+              className="px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-2"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-              CSV
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+              Add Product
             </button>
-          )}
-          <button
-            onClick={() => { setEditingProduct(null); setShowForm(true); }}
-            className="px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-            Add Product
-          </button>
+          </div>
         </div>
-      </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Search products..."
-            value={searchInput}
-            onChange={e => setSearchInput(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-surface-800 border border-surface-700 text-surface-100 text-sm placeholder:text-surface-500 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/50 transition-colors"
-          />
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search products..."
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+              className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-surface-800 border border-surface-700 text-surface-100 text-sm placeholder:text-surface-500 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/50 transition-colors"
+            />
+          </div>
+          <select
+            value={filters.category_id ?? ''}
+            onChange={e => setFilters(f => ({ ...f, page: 1, category_id: e.target.value ? Number(e.target.value) : undefined }))}
+            className="px-4 py-2.5 rounded-xl bg-surface-800 border border-surface-700 text-surface-100 text-sm focus:outline-none focus:border-primary-500 transition-colors"
+          >
+            <option value="">All Categories</option>
+            {categories.map(c => (
+              <option key={c.id} value={c.id}>{c.name} ({c.product_count ?? 0})</option>
+            ))}
+          </select>
         </div>
-        <select
-          value={filters.category_id ?? ''}
-          onChange={e => setFilters(f => ({ ...f, page: 1, category_id: e.target.value ? Number(e.target.value) : undefined }))}
-          className="px-4 py-2.5 rounded-xl bg-surface-800 border border-surface-700 text-surface-100 text-sm focus:outline-none focus:border-primary-500 transition-colors"
-        >
-          <option value="">All Categories</option>
-          {categories.map(c => (
-            <option key={c.id} value={c.id}>{c.name} ({c.product_count ?? 0})</option>
-          ))}
-        </select>
       </div>
 
       {/* Error */}
@@ -152,8 +154,8 @@ export function ProductsPage() {
         </div>
       )}
 
-      {/* Products table */}
-      <div className="bg-surface-800/50 rounded-xl border border-surface-700/50 overflow-hidden">
+      {/* Products table card */}
+      <div className="flex-1 min-h-0 bg-surface-800/50 rounded-xl border border-surface-700/50 flex flex-col overflow-hidden shadow-sm">
         {loading ? (
           <div className="flex justify-center py-12">
             <div className="w-8 h-8 border-3 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
@@ -166,11 +168,13 @@ export function ProductsPage() {
           </div>
         ) : (
           <>
-            {/* Desktop table */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-surface-700/50">
+            {/* Scrollable table rows container */}
+            <div className="flex-1 min-h-0 overflow-auto">
+              {/* Desktop table */}
+              <div className="hidden md:block">
+                <table className="w-full text-left">
+                  <thead className="sticky top-0 bg-surface-900 border-b border-surface-700/50 z-10 shadow-sm">
+                    <tr>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-surface-400 uppercase tracking-wider">Product</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-surface-400 uppercase tracking-wider">Category</th>
                     <th className="text-right px-4 py-3 text-xs font-semibold text-surface-400 uppercase tracking-wider">Cost</th>
@@ -263,34 +267,33 @@ export function ProductsPage() {
                 </div>
               ))}
             </div>
+          </div>
+
+            {/* Pinned Card Footer: Pagination */}
+            <div className="flex-shrink-0 px-4 py-3 bg-surface-900/60 border-t border-surface-700/50 flex items-center justify-between">
+              <p className="text-surface-400 text-xs sm:text-sm">
+                Page {pagination.page} of {pagination.total_pages || 1} <span className="hidden sm:inline">({pagination.total} items)</span>
+              </p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setFilters(f => ({ ...f, page: f.page - 1 }))}
+                  disabled={pagination.page <= 1}
+                  className="px-3 py-1.5 rounded-lg bg-surface-800 text-surface-300 text-xs sm:text-sm hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  ← Prev
+                </button>
+                <button
+                  onClick={() => setFilters(f => ({ ...f, page: f.page + 1 }))}
+                  disabled={pagination.page >= pagination.total_pages}
+                  className="px-3 py-1.5 rounded-lg bg-surface-800 text-surface-300 text-xs sm:text-sm hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
           </>
         )}
       </div>
-
-      {/* Pagination */}
-      {pagination.total_pages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-surface-400 text-sm">
-            Page {pagination.page} of {pagination.total_pages} ({pagination.total} items)
-          </p>
-          <div className="flex gap-1">
-            <button
-              onClick={() => setFilters(f => ({ ...f, page: f.page - 1 }))}
-              disabled={pagination.page <= 1}
-              className="px-3 py-1.5 rounded-lg bg-surface-800 text-surface-300 text-sm hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              ← Prev
-            </button>
-            <button
-              onClick={() => setFilters(f => ({ ...f, page: f.page + 1 }))}
-              disabled={pagination.page >= pagination.total_pages}
-              className="px-3 py-1.5 rounded-lg bg-surface-800 text-surface-300 text-sm hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              Next →
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Product form modal */}
       {showForm && (
