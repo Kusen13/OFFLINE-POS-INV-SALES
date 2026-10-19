@@ -1,0 +1,16 @@
+Options -MultiViews -Indexes
+RewriteEngine On
+
+# Prevent direct access to internal files
+RewriteRule ^config/ - [F,L]
+RewriteRule ^models/ - [F,L]
+RewriteRule ^middleware/ - [F,L]
+RewriteRule ^utils/ - [F,L]
+RewriteRule ^controllers/ - [F,L]
+
+# Route: resource/id/action -> index.php?_r=resource&_id=id&_action=action
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^([^/]+)/?$ index.php?_r=$1 [QSA,L]
+RewriteRule ^([^/]+)/([^/]+)/?$ index.php?_r=$1&_id=$2 [QSA,L]
+RewriteRule ^([^/]+)/([^/]+)/([^/]+)/?$ index.php?_r=$1&_id=$2&_action=$3 [QSA,L]

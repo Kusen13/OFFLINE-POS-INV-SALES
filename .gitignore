@@ -1,0 +1,37 @@
+# Dependencies
+frontend/node_modules/
+node_modules/
+
+# Build output
+frontend/dist/
+dist/
+
+# Environment & config
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# PHP
+api/config/database.local.php
+
+# Logs
+*.log
+npm-debug.log*
+
+# PWA dev artifacts
+dev-dist/
+
+# Database dumps (keep schema, ignore dumps)
+database/dumps/
