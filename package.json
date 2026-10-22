@@ -1,0 +1,31 @@
+{
+  "name": "offline-pos-inv-sales",
+  "version": "1.0.0",
+  "description": "A local, offline-first Point of Sale system designed for small businesses. Mobile devices handle sales via a PWA, while a Windows laptop runs the main dashboard, database, and API. Synchronization happens manually over local Wi-Fi—no internet required.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "studio": "prisma studio",
+    "db:pull": "prisma db pull",
+    "db:generate": "prisma generate",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kusen13/OFFLINE-POS-INV-SALES.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Kusen13/OFFLINE-POS-INV-SALES/issues"
+  },
+  "homepage": "https://github.com/Kusen13/OFFLINE-POS-INV-SALES#readme",
+  "devDependencies": {
+    "@prisma/client": "^5.22.0",
+    "prisma": "^5.22.0"
+  }
+}

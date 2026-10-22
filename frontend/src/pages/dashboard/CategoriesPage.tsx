@@ -133,21 +133,21 @@ export function CategoriesPage() {
       setDeleteConfirm(null);
       loadCategories();
     }
-  }
+  };
 
   return (
-    <div className="space-y-5 animate-fade-in pb-20 lg:pb-0">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-50">Categories</h1>
-          <p className="text-surface-400 mt-1">{categories.length} categories</p>
+    <div className="flex-1 min-h-0 flex flex-col space-y-3 sm:space-y-4 animate-fade-in">
+      <div className="flex items-center justify-between gap-2.5">
+        <div className="hidden lg:block">
+          <h1 className="text-xl sm:text-2xl font-bold text-surface-50 tracking-tight">Categories</h1>
+          <p className="text-surface-400 mt-0.5 text-xs sm:text-sm">{categories.length} categories</p>
         </div>
         <button
           onClick={() => { setEditing(null); setShowForm(true); }}
-          className="px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-2"
+          className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-primary-600 text-white text-xs sm:text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ml-auto"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-          Add Category
+          <span>Add Category</span>
         </button>
       </div>
 
@@ -283,7 +283,16 @@ function CategoryFormModal({ category, onSave, onClose }: {
           </div>
           <div>
             <label className="block text-xs font-medium text-surface-400 mb-1.5">Sort Order</label>
-            <input type="number" min="0" value={sortOrder} onChange={e => setSortOrder(parseInt(e.target.value) || 0)} className="form-input" />
+            <input
+              type="number"
+              min="0"
+              value={sortOrder === 0 ? '' : sortOrder}
+              placeholder="0"
+              onFocus={e => e.target.select()}
+              onClick={e => (e.target as HTMLInputElement).select()}
+              onChange={e => setSortOrder(parseInt(e.target.value) || 0)}
+              className="form-input"
+            />
           </div>
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 rounded-xl bg-surface-700 text-surface-200 text-sm font-medium hover:bg-surface-600 transition-colors">Cancel</button>

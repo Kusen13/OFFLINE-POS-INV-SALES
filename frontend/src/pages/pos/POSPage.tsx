@@ -13,7 +13,6 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { MobileDrawer } from '../../components/layout/MobileDrawer';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { useCartStore } from '../../features/cart/cartStore';
 import { useSyncStore } from '../../features/sync/syncStore';
@@ -21,7 +20,8 @@ import { formatCurrency } from '../../utils/currency';
 import { generateUUID } from '../../utils/uuid';
 import { nowISO } from '../../utils/date';
 import { saveSale, generateReceiptNumber } from '../../db/salesRepository';
-import { getActiveProducts, getAllCategories, getAllPaymentMethods } from '../../db/productRepository';
+import { getActiveProducts, getAllCategories, getAllPaymentMethods, adjustProductStock } from '../../db/productRepository';
+import { creditSaleToDailyClosing } from '../../db/closingRepository';
 import { fetchProductUpdates } from '../../api/sync';
 import { replaceAllProducts, replaceAllCategories, replaceAllPaymentMethods, setLastProductSync } from '../../db/productRepository';
 import type { Product, Category } from '../../types/product';
@@ -43,7 +43,6 @@ export function POSPage() {
   const [loading, setLoading] = useState(true);
   const [syncingProducts, setSyncingProducts] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [lastReceipt, setLastReceipt] = useState<PendingSale | null>(null);
 
   // Checkout state
@@ -57,9 +56,39 @@ export function POSPage() {
   const subtotal = getSubtotal();
   const total = subtotal; // No tax/discount for now
 
-  // Load products from IndexedDB (offline-first)
+  // Load products from IndexedDB (offline-first) and listen for inventory updates
   useEffect(() => {
     loadLocalData();
+
+    const handleInvUpdate = async () => {
+      const prods = await getActiveProducts();
+      setProducts(prods.filter(p => p.item_type !== 'supply'));
+    };
+    window.addEventListener('pos_inventory_updated', handleInvUpdate);
+    window.addEventListener('pos_sync_completed', handleInvUpdate);
+    window.addEventListener('focus', loadLocalData);
+    const handleVis = () => {
+      if (document.visibilityState === 'visible') loadLocalData();
+    };
+    document.addEventListener('visibilitychange', handleVis);
+
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel('pos_channel');
+      channel.onmessage = (event) => {
+        if (event.data?.type === 'INVENTORY_UPDATED' || event.data?.type === 'SYNC_COMPLETED') {
+          handleInvUpdate();
+        }
+      };
+    } catch (_) {}
+
+    return () => {
+      window.removeEventListener('pos_inventory_updated', handleInvUpdate);
+      window.removeEventListener('pos_sync_completed', handleInvUpdate);
+      window.removeEventListener('focus', loadLocalData);
+      document.removeEventListener('visibilitychange', handleVis);
+      if (channel) channel.close();
+    };
   }, []);
 
   async function handleDownloadProducts() {
@@ -72,7 +101,8 @@ export function POSPage() {
         await replaceAllCategories(data.categories);
         await replaceAllPaymentMethods(data.payment_methods);
         await setLastProductSync(data.server_time);
-        setProducts(data.products.filter(p => p.is_active));
+        // Only show products (not supplies) in POS
+        setProducts(data.products.filter(p => p.is_active && p.item_type !== 'supply'));
         setCategories(data.categories);
         setPaymentMethods(data.payment_methods.filter(m => m.is_active));
       }
@@ -84,34 +114,37 @@ export function POSPage() {
   }
 
   async function loadLocalData() {
-    setLoading(true);
     try {
-      let prods = await getActiveProducts();
-      let cats = await getAllCategories();
-      let methods = await getAllPaymentMethods();
+      // 1. Instant offline load from local IndexedDB
+      const [prods, cats, methods] = await Promise.all([
+        getActiveProducts(),
+        getAllCategories(),
+        getAllPaymentMethods(),
+      ]);
 
-      // If no local data, try to fetch from server
-      if (prods.length === 0) {
-        try {
-          const data = await fetchProductUpdates();
-          if (data.products && data.products.length > 0) {
-            await replaceAllProducts(data.products);
-            await replaceAllCategories(data.categories);
-            await replaceAllPaymentMethods(data.payment_methods);
-            await setLastProductSync(data.server_time);
-            prods = data.products.filter(p => p.is_active);
-            cats = data.categories;
-            methods = data.payment_methods.filter(m => m.is_active);
-          }
-        } catch (err) {
-          console.warn('Initial product fetch failed:', err);
-          setDownloadError(err instanceof Error ? err.message : 'Failed to reach server');
-        }
+      if (prods.length > 0) {
+        setProducts(prods.filter(p => p.item_type !== 'supply'));
+        setCategories(cats);
+        setPaymentMethods(methods.length > 0 ? methods : [{ id: 1, name: 'Cash', is_active: true, sort_order: 1 }]);
+        setLoading(false);
       }
 
-      setProducts(prods);
-      setCategories(cats);
-      setPaymentMethods(methods.length > 0 ? methods : [{ id: 1, name: 'Cash', is_active: true, sort_order: 1 }]);
+      // 2. Live background sync with server to ensure stocks are 100% current
+      try {
+        const data = await fetchProductUpdates(); // full fetch without since
+        if (data.products && data.products.length > 0) {
+          await replaceAllProducts(data.products);
+          await replaceAllCategories(data.categories);
+          await replaceAllPaymentMethods(data.payment_methods);
+          await setLastProductSync(data.server_time);
+          setProducts(data.products.filter(p => p.is_active && p.item_type !== 'supply'));
+          setCategories(data.categories);
+          setPaymentMethods(data.payment_methods.filter(m => m.is_active));
+        }
+      } catch (err) {
+        // Offline - silently keep local IndexedDB data
+        console.warn('Background product stock refresh skipped (offline or network error):', err);
+      }
     } finally {
       setLoading(false);
     }
@@ -160,6 +193,39 @@ export function POSPage() {
       };
 
       await saveSale(sale);
+
+      // Instantly deduct local stock in IndexedDB and record movement log
+      for (const item of sale.items) {
+        try {
+          await adjustProductStock(
+            item.product_id,
+            -item.quantity,
+            'SALE',
+            `POS Resibo #${sale.receipt_number}`
+          );
+        } catch (stockErr) {
+          console.warn(`Could not adjust stock for ${item.product_name}:`, stockErr);
+        }
+      }
+
+      // Automatically credit POS transaction to today's Daily Closing draft
+      try {
+        await creditSaleToDailyClosing(sale);
+      } catch (closingErr) {
+        console.warn('Could not credit sale to daily closing:', closingErr);
+      }
+
+      // Update in-memory product stock in POS screen
+      setProducts(prev =>
+        prev.map(p => {
+          const sold = sale.items.find(i => i.product_id === p.id);
+          if (sold) {
+            return { ...p, current_stock: Math.max(0, (p.current_stock || 0) - sold.quantity) };
+          }
+          return p;
+        })
+      );
+
       setLastReceipt(sale);
       clearCart();
       setCashTendered(0);
@@ -167,6 +233,14 @@ export function POSPage() {
       setNotes('');
       setView('receipt');
       refreshCounts();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('pos_sale_completed', { detail: sale }));
+        try {
+          const ch = new BroadcastChannel('pos_channel');
+          ch.postMessage({ type: 'SALE_COMPLETED', sale });
+          ch.close();
+        } catch (_) {}
+      }
     } catch (err) {
       alert('Failed to save sale: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
@@ -334,9 +408,11 @@ export function POSPage() {
               <input
                 type="number"
                 value={cashTendered || ''}
+                placeholder="0.00"
+                onFocus={e => e.target.select()}
+                onClick={e => (e.target as HTMLInputElement).select()}
                 onChange={e => setCashTendered(parseFloat(e.target.value) || 0)}
                 className="form-input text-2xl font-bold text-center mb-3"
-                placeholder="0.00"
                 min={0}
                 step="0.01"
               />
@@ -490,16 +566,13 @@ export function POSPage() {
   // MENU VIEW (default)
   // ============================================================
   return (
-    <div className="min-h-dvh bg-surface-950 flex flex-col">
-      {/* Mobile navigation drawer */}
-      <MobileDrawer isOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
-
+    <div className="flex-1 flex flex-col min-h-0 bg-surface-950">
       {/* Top bar */}
-      <header className="flex items-center gap-2.5 px-3.5 py-2.5 bg-surface-900 border-b border-surface-700/50">
-        {/* Burger Button */}
+      <header className="flex items-center gap-2.5 px-3.5 py-2.5 bg-surface-900 border-b border-surface-700/50 flex-shrink-0">
+        {/* Burger Button - only visible on mobile/tablet; on desktop the AppShell sidebar is already visible */}
         <button
-          onClick={() => setDrawerOpen(true)}
-          className="p-2 -ml-1 rounded-xl text-surface-200 hover:text-white hover:bg-surface-800 transition-colors active:scale-95 shrink-0"
+          onClick={() => window.dispatchEvent(new CustomEvent('toggle_pos_sidebar'))}
+          className="p-2 -ml-1 rounded-xl text-surface-200 hover:text-white hover:bg-surface-800 transition-colors active:scale-95 shrink-0 lg:hidden cursor-pointer"
           aria-label="Open navigation menu"
           title="Open Menu"
         >

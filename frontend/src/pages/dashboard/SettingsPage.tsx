@@ -4,6 +4,8 @@
 
 import { useState, useEffect } from 'react';
 import { fetchSettings, updateSetting } from '../../api/endpoints';
+import { fetchProductUpdates } from '../../api/sync';
+import { replaceAllProducts } from '../../db/productRepository';
 import type { AppSettings } from '../../types/common';
 
 export function SettingsPage() {
@@ -69,8 +71,8 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in pb-20 lg:pb-0 max-w-2xl">
-      <div>
+    <div className="space-y-5 sm:space-y-6 animate-fade-in max-w-2xl">
+      <div className="hidden lg:block">
         <h1 className="text-2xl font-bold text-surface-50">Settings</h1>
         <p className="text-surface-400 mt-1">Configure your POS system</p>
       </div>
@@ -109,9 +111,9 @@ export function SettingsPage() {
         </div>
       </section>
 
-      {/* About */}
-      <section className="bg-surface-800/50 rounded-xl border border-surface-700/50 p-5">
-        <h3 className="text-sm font-semibold text-surface-300 uppercase tracking-wider mb-3">About</h3>
+      {/* About & Cache Reset */}
+      <section className="bg-surface-800/50 rounded-xl border border-surface-700/50 p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-surface-300 uppercase tracking-wider">About & Updates</h3>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-surface-400">Version</span>
@@ -125,6 +127,54 @@ export function SettingsPage() {
             <span className="text-surface-400">Storage</span>
             <span className="text-surface-200">IndexedDB + MariaDB</span>
           </div>
+        </div>
+
+        <div className="pt-3 border-t border-surface-700/40 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-surface-200">Phone App Update</p>
+            <p className="text-xs text-surface-400 mt-0.5">I-clear ang offline cache kung hindi agad lumalabas ang pinakabagong data</p>
+          </div>
+          <button
+            onClick={async () => {
+              if (confirm('I-clear ang cache at i-reload ang app upang makuha ang pinakabagong update?')) {
+                // 1. Force download latest products and stocks from server into IndexedDB
+                try {
+                  const data = await fetchProductUpdates();
+                  if (data.products && data.products.length > 0) {
+                    await replaceAllProducts(data.products);
+                  }
+                } catch (e) {
+                  console.warn('Could not sync fresh products before reload:', e);
+                }
+
+                // 2. Clear sync timestamps
+                localStorage.removeItem('pos_last_product_sync');
+                localStorage.removeItem('pos_last_sync_time');
+
+                // 3. Unregister Service Workers
+                if ('serviceWorker' in navigator) {
+                  const regs = await navigator.serviceWorker.getRegistrations();
+                  for (const reg of regs) {
+                    await reg.unregister();
+                  }
+                }
+
+                // 4. Delete Caches
+                if ('caches' in window) {
+                  const keys = await caches.keys();
+                  for (const key of keys) {
+                    await caches.delete(key);
+                  }
+                }
+
+                // 5. Reload app
+                window.location.reload();
+              }
+            }}
+            className="px-3.5 py-2 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold transition-all active:scale-95 shrink-0 cursor-pointer shadow-xs"
+          >
+            🔄 I-reload ang App
+          </button>
         </div>
       </section>
     </div>
@@ -151,6 +201,8 @@ function SettingRow({ label, value, settingKey, onSave, saving, saved, type = 't
           <input
             type={type}
             value={editValue}
+            onFocus={e => e.target.select()}
+            onClick={e => (e.target as HTMLInputElement).select()}
             onChange={e => setEditValue(e.target.value)}
             className="form-input w-48 text-right text-sm"
           />

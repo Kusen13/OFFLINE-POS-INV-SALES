@@ -9,7 +9,8 @@
 import { generateUUID } from '../utils/uuid';
 
 const API_BASE = '/api';
-const DEFAULT_TIMEOUT = 15000; // 15 seconds
+const DEFAULT_GET_TIMEOUT = 3500; // 3.5s for GET queries so offline fallback is fast
+const DEFAULT_POST_TIMEOUT = 12000; // 12s for writes/batch operations
 
 export class ApiError extends Error {
   status: number;
@@ -46,7 +47,17 @@ function getDeviceId(): string {
  * Core fetch wrapper
  */
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, timeout = DEFAULT_TIMEOUT, headers = {} } = options;
+  // If browser is known to be offline, fail fast immediately
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new ApiError('Device is offline', 0);
+  }
+
+  const {
+    method = 'GET',
+    body,
+    timeout = method === 'GET' ? DEFAULT_GET_TIMEOUT : DEFAULT_POST_TIMEOUT,
+    headers = {},
+  } = options;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);

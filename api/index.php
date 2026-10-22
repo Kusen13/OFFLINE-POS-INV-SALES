@@ -100,6 +100,26 @@ switch ($resource) {
         handleExpenses($method, $id);
         break;
 
+    case 'daily-closings':
+        require_once __DIR__ . '/controllers/DailyClosingController.php';
+        handleDailyClosings($method, $id);
+        break;
+
+    case 'reorders':
+        require_once __DIR__ . '/controllers/ReorderController.php';
+        handleReorders($method, $id);
+        break;
+
+    case 'suppliers':
+        require_once __DIR__ . '/controllers/SupplierController.php';
+        handleSuppliers($method, $id);
+        break;
+
+    case 'bills':
+        require_once __DIR__ . '/controllers/BillController.php';
+        handleBills($method, $id);
+        break;
+
     case 'sync':
         require_once __DIR__ . '/controllers/SyncController.php';
         // URL: /sync/{action} - second segment is the action, not an ID

@@ -1,0 +1,202 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model categories {
+  id          Int        @id @default(autoincrement()) @db.UnsignedInt
+  name        String     @unique(map: "uk_categories_name") @db.VarChar(100)
+  description String?    @db.VarChar(255)
+  sort_order  Int        @default(0) @db.UnsignedInt
+  is_active   Boolean    @default(true)
+  created_at  DateTime   @default(now()) @db.DateTime(0)
+  updated_at  DateTime   @default(now()) @db.DateTime(0)
+  products    products[]
+
+  @@index([is_active], map: "idx_categories_active")
+}
+
+model expenses {
+  id           Int      @id @default(autoincrement()) @db.UnsignedInt
+  category     String   @db.VarChar(100)
+  description  String   @db.VarChar(255)
+  amount       Decimal  @db.Decimal(12, 2)
+  expense_date DateTime @db.Date
+  created_at   DateTime @default(now()) @db.DateTime(0)
+  updated_at   DateTime @default(now()) @db.DateTime(0)
+
+  @@index([category], map: "idx_expenses_category")
+  @@index([expense_date], map: "idx_expenses_date")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model inventory_movements {
+  id              Int                      @id @default(autoincrement()) @db.UnsignedInt
+  product_id      Int                      @db.UnsignedInt
+  type            inventory_movements_type
+  quantity_change Int
+  stock_before    Int
+  stock_after     Int
+  reference_type  String?                  @db.VarChar(50)
+  reference_id    Int?                     @db.UnsignedInt
+  notes           String?                  @db.VarChar(255)
+  created_at      DateTime                 @default(now()) @db.DateTime(0)
+  products        products                 @relation(fields: [product_id], references: [id], map: "fk_inv_movements_product")
+
+  @@index([created_at], map: "idx_inv_movements_created")
+  @@index([product_id], map: "idx_inv_movements_product")
+  @@index([reference_type, reference_id], map: "idx_inv_movements_ref")
+  @@index([type], map: "idx_inv_movements_type")
+}
+
+model payment_methods {
+  id         Int      @id @default(autoincrement()) @db.UnsignedInt
+  name       String   @unique(map: "uk_payment_methods_name") @db.VarChar(50)
+  is_active  Boolean  @default(true)
+  sort_order Int      @default(0) @db.UnsignedInt
+  created_at DateTime @default(now()) @db.DateTime(0)
+  updated_at DateTime @default(now()) @db.DateTime(0)
+  sales      sales[]
+}
+
+model products {
+  id                  Int                   @id @default(autoincrement()) @db.UnsignedInt
+  category_id         Int                   @db.UnsignedInt
+  name                String                @db.VarChar(150)
+  sku                 String                @unique(map: "uk_products_sku") @db.VarChar(50)
+  description         String?               @db.Text
+  cost_price          Decimal               @default(0.00) @db.Decimal(12, 2)
+  selling_price       Decimal               @default(0.00) @db.Decimal(12, 2)
+  current_stock       Int                   @default(0)
+  low_stock_threshold Int                   @default(10) @db.UnsignedInt
+  image_path          String?               @db.VarChar(255)
+  is_active           Boolean               @default(true)
+  created_at          DateTime              @default(now()) @db.DateTime(0)
+  updated_at          DateTime              @default(now()) @db.DateTime(0)
+  inventory_movements inventory_movements[]
+  categories          categories            @relation(fields: [category_id], references: [id], map: "fk_products_category")
+  sale_items          sale_items[]
+  stock_receipt_items stock_receipt_items[]
+
+  @@index([is_active], map: "idx_products_active")
+  @@index([category_id], map: "idx_products_category")
+  @@index([current_stock, low_stock_threshold], map: "idx_products_stock")
+  @@index([updated_at], map: "idx_products_updated")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model sale_items {
+  id           Int      @id @default(autoincrement()) @db.UnsignedInt
+  sale_id      Int      @db.UnsignedInt
+  product_id   Int      @db.UnsignedInt
+  product_name String   @db.VarChar(150)
+  product_sku  String   @db.VarChar(50)
+  unit_price   Decimal  @db.Decimal(12, 2)
+  unit_cost    Decimal  @db.Decimal(12, 2)
+  quantity     Int      @default(1) @db.UnsignedInt
+  line_total   Decimal  @db.Decimal(12, 2)
+  created_at   DateTime @default(now()) @db.DateTime(0)
+  products     products @relation(fields: [product_id], references: [id], map: "fk_sale_items_product")
+  sales        sales    @relation(fields: [sale_id], references: [id], onDelete: Cascade, map: "fk_sale_items_sale")
+
+  @@index([product_id], map: "idx_sale_items_product")
+  @@index([sale_id], map: "idx_sale_items_sale")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model sales {
+  id                Int             @id @default(autoincrement()) @db.UnsignedInt
+  uuid              String          @unique(map: "uk_sales_uuid") @db.Char(36)
+  receipt_number    String          @unique(map: "uk_sales_receipt") @db.VarChar(30)
+  subtotal          Decimal         @default(0.00) @db.Decimal(12, 2)
+  discount_amount   Decimal         @default(0.00) @db.Decimal(12, 2)
+  tax_amount        Decimal         @default(0.00) @db.Decimal(12, 2)
+  total_amount      Decimal         @default(0.00) @db.Decimal(12, 2)
+  cash_tendered     Decimal?        @db.Decimal(12, 2)
+  change_amount     Decimal?        @db.Decimal(12, 2)
+  payment_method_id Int             @db.UnsignedInt
+  payment_reference String?         @db.VarChar(100)
+  source_device     String?         @db.VarChar(100)
+  notes             String?         @db.Text
+  sold_at           DateTime        @db.DateTime(0)
+  synced_at         DateTime?       @db.DateTime(0)
+  created_at        DateTime        @default(now()) @db.DateTime(0)
+  sale_items        sale_items[]
+  payment_methods   payment_methods @relation(fields: [payment_method_id], references: [id], map: "fk_sales_payment_method")
+
+  @@index([payment_method_id], map: "idx_sales_payment")
+  @@index([sold_at], map: "idx_sales_sold_at")
+  @@index([synced_at], map: "idx_sales_synced_at")
+}
+
+model settings {
+  id         Int      @id @default(autoincrement()) @db.UnsignedInt
+  key_name   String   @unique(map: "uk_settings_key") @db.VarChar(100)
+  value      String?  @db.Text
+  updated_at DateTime @default(now()) @db.DateTime(0)
+}
+
+model stock_receipt_items {
+  id               Int            @id @default(autoincrement()) @db.UnsignedInt
+  stock_receipt_id Int            @db.UnsignedInt
+  product_id       Int            @db.UnsignedInt
+  quantity         Int            @db.UnsignedInt
+  unit_cost        Decimal?       @db.Decimal(12, 2)
+  created_at       DateTime       @default(now()) @db.DateTime(0)
+  products         products       @relation(fields: [product_id], references: [id], map: "fk_sr_items_product")
+  stock_receipts   stock_receipts @relation(fields: [stock_receipt_id], references: [id], onDelete: Cascade, map: "fk_sr_items_receipt")
+
+  @@index([product_id], map: "idx_sr_items_product")
+  @@index([stock_receipt_id], map: "idx_sr_items_receipt")
+}
+
+model stock_receipts {
+  id                  Int                   @id @default(autoincrement()) @db.UnsignedInt
+  receipt_ref         String?               @db.VarChar(50)
+  supplier            String?               @db.VarChar(150)
+  notes               String?               @db.Text
+  total_items         Int                   @default(0) @db.UnsignedInt
+  received_at         DateTime              @default(now()) @db.DateTime(0)
+  created_at          DateTime              @default(now()) @db.DateTime(0)
+  stock_receipt_items stock_receipt_items[]
+
+  @@index([received_at], map: "idx_stock_receipts_received")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model sync_logs {
+  id               Int              @id @default(autoincrement()) @db.UnsignedInt
+  transaction_uuid String           @db.Char(36)
+  device_id        String?          @db.VarChar(100)
+  status           sync_logs_status
+  request_summary  String?          @db.Text
+  error_message    String?          @db.Text
+  items_count      Int?             @default(0) @db.UnsignedInt
+  total_amount     Decimal?         @db.Decimal(12, 2)
+  synced_at        DateTime         @default(now()) @db.DateTime(0)
+  created_at       DateTime         @default(now()) @db.DateTime(0)
+
+  @@index([device_id], map: "idx_sync_logs_device")
+  @@index([status], map: "idx_sync_logs_status")
+  @@index([synced_at], map: "idx_sync_logs_synced")
+  @@index([transaction_uuid], map: "idx_sync_logs_uuid")
+}
+
+enum inventory_movements_type {
+  STOCK_IN
+  SALE
+  ADJUSTMENT
+  RETURN
+  INITIAL
+}
+
+enum sync_logs_status {
+  RECEIVED
+  PROCESSED
+  FAILED
+  DUPLICATE
+}

@@ -4,23 +4,12 @@
 
 import { NavLink, useLocation } from 'react-router-dom';
 import { SyncStatusBar } from '../SyncStatusBar';
+import { NAV_ITEMS } from './navItems';
 
 export interface MobileDrawerProps {
   isOpen: boolean;
   onClose: () => void;
 }
-
-const navItems = [
-  { path: '/pos', label: 'Point of Sale', icon: '🛒', desc: 'Punch orders & cash checkout' },
-  { path: '/dashboard', label: 'Dashboard', icon: '📊', desc: 'Overview, analytics & charts' },
-  { path: '/products', label: 'Products', icon: '📦', desc: 'Manage catalog & pricing' },
-  { path: '/categories', label: 'Categories', icon: '🏷️', desc: 'Menu grouping & sorting' },
-  { path: '/inventory', label: 'Inventory', icon: '📋', desc: 'Stock levels & adjustments' },
-  { path: '/sales', label: 'Sales History', icon: '💰', desc: 'Receipts & transactions' },
-  { path: '/expenses', label: 'Expenses', icon: '💸', desc: 'Track operational costs' },
-  { path: '/sync', label: 'Sync Center', icon: '🔄', desc: 'Cloud/laptop synchronization' },
-  { path: '/settings', label: 'Settings', icon: '⚙️', desc: 'Store info & preferences' },
-];
 
 export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
   const location = useLocation();
@@ -62,7 +51,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
 
         {/* Navigation list */}
         <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
-          {navItems.map((item) => {
+          {NAV_ITEMS.map((item) => {
             const isActive = location.pathname === item.path;
             return (
               <NavLink

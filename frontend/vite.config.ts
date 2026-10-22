@@ -1,15 +1,18 @@
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
+    basicSsl(),
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'prompt',
+      registerType: 'autoUpdate',
+      injectRegister: 'auto',
       includeAssets: ['icons/*.svg'],
       manifest: {
         name: 'POS - Point of Sale',
@@ -41,8 +44,28 @@ export default defineConfig({
         ],
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api/],
         runtimeCaching: [
+          {
+            // Cache same-origin app resources (scripts, styles, HTML, images, icons, modules)
+            urlPattern: ({ url, sameOrigin }) => Boolean(sameOrigin && !url.pathname.startsWith('/api')),
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'pos-app-cache',
+              networkTimeoutSeconds: 3,
+              expiration: {
+                maxEntries: 500,
+                maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
           {
             urlPattern: /^https?:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'CacheFirst',
@@ -71,6 +94,16 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:80/OFFLINE-POS-INV-SALES',
+        changeOrigin: true,
+      },
+    },
+  },
+  preview: {
+    host: true,
+    port: 4173,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:80/OFFLINE-POS-INV-SALES',

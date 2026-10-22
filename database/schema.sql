@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS `products` (
   `cost_price` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
   `selling_price` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
   `current_stock` INT NOT NULL DEFAULT 0,
+  `initial_stock` INT NOT NULL DEFAULT 0,
+  `initial_stock_date` DATE DEFAULT NULL,
   `low_stock_threshold` INT UNSIGNED NOT NULL DEFAULT 10,
   `image_path` VARCHAR(255) DEFAULT NULL,
   `is_active` TINYINT(1) NOT NULL DEFAULT 1,
@@ -227,6 +229,57 @@ CREATE TABLE IF NOT EXISTS `settings` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_settings_key` (`key_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- DAILY CLOSINGS & CASH BALANCING
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `daily_closings` (
+  `id` VARCHAR(64) NOT NULL,
+  `date` DATE NOT NULL,
+  `status` ENUM('DRAFT', 'FINALIZED') NOT NULL DEFAULT 'DRAFT',
+  `total_prepared` INT NOT NULL DEFAULT 0,
+  `total_sold` INT NOT NULL DEFAULT 0,
+  `total_unsold` INT NOT NULL DEFAULT 0,
+  `total_spoilage` INT NOT NULL DEFAULT 0,
+  `total_spoilage_loss` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `total_revenue` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `total_cogs` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `total_gross_profit` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `opening_cash` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `cash_sales` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `cash_expenses` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `bills_allocation` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `expected_cash_on_hand` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `actual_cash_on_hand` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `cash_discrepancy` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `notes` TEXT DEFAULT NULL,
+  `items_data` LONGTEXT NOT NULL,
+  `finalized_at` DATETIME DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_daily_closings_date` (`date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- BBQ RE-ORDERS & SUPPLIES REPLENISHMENT
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `reorders` (
+  `id` VARCHAR(64) NOT NULL,
+  `order_date` DATE NOT NULL,
+  `based_on_date` DATE DEFAULT NULL,
+  `status` ENUM('DRAFT', 'ORDERED', 'RECEIVED') NOT NULL DEFAULT 'DRAFT',
+  `total_quantity` INT NOT NULL DEFAULT 0,
+  `total_cost` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  `supplier_name` VARCHAR(100) DEFAULT 'BBQ Supplier',
+  `notes` TEXT DEFAULT NULL,
+  `items_data` LONGTEXT NOT NULL,
+  `received_at` DATETIME DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_reorders_date` (`order_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================

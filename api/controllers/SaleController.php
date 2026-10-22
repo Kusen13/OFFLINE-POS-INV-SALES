@@ -88,6 +88,32 @@ function listSales(PDO $pdo): void {
         return $s;
     }, $sales);
 
+    // Optionally include line items
+    if (getQueryParam('with_items') && !empty($sales)) {
+        $saleIds = array_column($sales, 'id');
+        $placeholders = implode(',', array_fill(0, count($saleIds), '?'));
+        $stmtItems = $pdo->prepare("SELECT si.* FROM sale_items si WHERE si.sale_id IN ($placeholders) ORDER BY si.id ASC");
+        $stmtItems->execute($saleIds);
+        $items = $stmtItems->fetchAll();
+
+        $itemsBySale = [];
+        foreach ($items as $item) {
+            $item['id'] = (int) $item['id'];
+            $item['sale_id'] = (int) $item['sale_id'];
+            $item['product_id'] = (int) $item['product_id'];
+            $item['unit_price'] = (float) $item['unit_price'];
+            $item['unit_cost'] = (float) $item['unit_cost'];
+            $item['quantity'] = (int) $item['quantity'];
+            $item['line_total'] = (float) $item['line_total'];
+            $itemsBySale[$item['sale_id']][] = $item;
+        }
+
+        foreach ($sales as &$s) {
+            $s['items'] = $itemsBySale[$s['id']] ?? [];
+        }
+        unset($s);
+    }
+
     jsonPaginatedResponse($sales, $total, $pagination['page'], $pagination['per_page']);
 }
 

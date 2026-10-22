@@ -241,6 +241,12 @@ function processSingleSale(PDO $pdo, array $saleData, string $deviceId): array {
             }
         }
 
+        // Automatically credit sold items to Daily Closing for this date (if draft exists)
+        $saleDate = substr($saleData['sold_at'], 0, 10);
+        if ($saleDate !== '2026-10-19' && $saleDate !== '2026-10-20') {
+            creditSaleToDailyClosingDraft($pdo, $saleDate, $saleData['items']);
+        }
+
         $pdo->commit();
 
         // Log successful sync
@@ -256,6 +262,91 @@ function processSingleSale(PDO $pdo, array $saleData, string $deviceId): array {
     } catch (Throwable $e) {
         $pdo->rollBack();
         throw $e;
+    }
+}
+
+/**
+ * Automatically credit sold items to Daily Closing for a specific date
+ */
+function creditSaleToDailyClosingDraft(PDO $pdo, string $saleDate, array $saleItems): void {
+    $stmt = $pdo->prepare('SELECT * FROM daily_closings WHERE date = :date FOR UPDATE');
+    $stmt->execute([':date' => $saleDate]);
+    $closing = $stmt->fetch();
+    if (!$closing || $closing['status'] === 'FINALIZED') {
+        return;
+    }
+
+    $items = json_decode($closing['items_data'], true);
+    if (!is_array($items) || empty($items)) {
+        return;
+    }
+
+    $modified = false;
+    foreach ($saleItems as $sItem) {
+        $pId = (int)($sItem['product_id'] ?? 0);
+        $qty = (int)($sItem['quantity'] ?? 0);
+        $pName = trim(strtolower($sItem['product_name'] ?? ''));
+
+        foreach ($items as &$cItem) {
+            $cId = (int)($cItem['product_id'] ?? 0);
+            $cName = trim(strtolower($cItem['product_name'] ?? ''));
+            if ($cId === $pId || ($pName !== '' && $cName === $pName)) {
+                $cItem['sold_qty'] = (int)($cItem['sold_qty'] ?? 0) + $qty;
+                $prep = (int)($cItem['prepared_qty'] ?? 0);
+                $spoil = (int)($cItem['spoilage_qty'] ?? 0);
+                $cItem['unsold_qty'] = max(0, $prep - $cItem['sold_qty'] - $spoil);
+                $cost = (float)($cItem['unit_cost'] ?? 0);
+                $price = (float)($cItem['selling_price'] ?? 0);
+                $cItem['actual_revenue'] = $cItem['sold_qty'] * $price;
+                $cItem['cogs'] = $cItem['sold_qty'] * $cost;
+                $cItem['gross_profit'] = $cItem['actual_revenue'] - $cItem['cogs'];
+                $cItem['discrepancy'] = ($cItem['sold_qty'] + $cItem['unsold_qty'] + $spoil) - $prep;
+                $modified = true;
+                break;
+            }
+        }
+        unset($cItem);
+    }
+
+    if ($modified) {
+        $totPrep = array_sum(array_column($items, 'prepared_qty'));
+        $totSold = array_sum(array_column($items, 'sold_qty'));
+        $totUnsold = array_sum(array_column($items, 'unsold_qty'));
+        $totSpoil = array_sum(array_column($items, 'spoilage_qty'));
+        $totRev = array_sum(array_column($items, 'actual_revenue'));
+        $totCogs = array_sum(array_column($items, 'cogs'));
+        $totGp = array_sum(array_column($items, 'gross_profit'));
+
+        $openCash = (float)($closing['opening_cash'] ?? 0);
+        $exp = (float)($closing['cash_expenses'] ?? 0);
+        $bills = (float)($closing['bills_allocation'] ?? 0);
+        $expCash = $openCash + $totRev - $exp - $bills;
+
+        $upStmt = $pdo->prepare('UPDATE daily_closings SET
+            total_prepared = :prep,
+            total_sold = :sold,
+            total_unsold = :unsold,
+            total_spoilage = :spoil,
+            total_revenue = :rev,
+            total_cogs = :cogs,
+            total_gross_profit = :gp,
+            cash_sales = :cash_sales,
+            expected_cash_on_hand = :exp_cash,
+            items_data = :items
+            WHERE date = :date');
+        $upStmt->execute([
+            ':prep' => $totPrep,
+            ':sold' => $totSold,
+            ':unsold' => $totUnsold,
+            ':spoil' => $totSpoil,
+            ':rev' => $totRev,
+            ':cogs' => $totCogs,
+            ':gp' => $totGp,
+            ':cash_sales' => $totRev,
+            ':exp_cash' => $expCash,
+            ':items' => json_encode($items),
+            ':date' => $saleDate,
+        ]);
     }
 }
 
@@ -291,13 +382,20 @@ function logSync(PDO $pdo, string $uuid, string $deviceId, string $status, array
  */
 function syncProductsToDevice(PDO $pdo): void {
     $since = getQueryParam('since');
+    $sinceDateTime = null;
+    if ($since) {
+        $ts = strtotime($since);
+        if ($ts !== false) {
+            $sinceDateTime = date('Y-m-d H:i:s', $ts);
+        }
+    }
 
     // Fetch categories
     $catSql = 'SELECT * FROM categories WHERE is_active = 1';
     $catParams = [];
-    if ($since) {
+    if ($sinceDateTime) {
         $catSql .= ' AND updated_at > :since';
-        $catParams[':since'] = $since;
+        $catParams[':since'] = $sinceDateTime;
     }
     $catSql .= ' ORDER BY sort_order ASC, name ASC';
     
@@ -311,9 +409,9 @@ function syncProductsToDevice(PDO $pdo): void {
                 LEFT JOIN categories c ON p.category_id = c.id 
                 WHERE p.is_active = 1';
     $prodParams = [];
-    if ($since) {
+    if ($sinceDateTime) {
         $prodSql .= ' AND p.updated_at > :since';
-        $prodParams[':since'] = $since;
+        $prodParams[':since'] = $sinceDateTime;
     }
     $prodSql .= ' ORDER BY p.name ASC';
 
@@ -347,6 +445,11 @@ function syncProductsToDevice(PDO $pdo): void {
         $p['selling_price'] = (float) $p['selling_price'];
         $p['current_stock'] = (int) $p['current_stock'];
         $p['low_stock_threshold'] = (int) $p['low_stock_threshold'];
+        $p['target_stock'] = isset($p['target_stock']) ? (int) $p['target_stock'] : 20;
+        $p['unit'] = $p['unit'] ?? 'sticks';
+        $p['supplier_id'] = $p['supplier_id'] ?? null;
+        $p['supplier_name'] = $p['supplier_name'] ?? null;
+        $p['reseller_price'] = isset($p['reseller_price']) && $p['reseller_price'] !== null ? (float) $p['reseller_price'] : null;
         $p['is_active'] = (bool) $p['is_active'];
         return $p;
     }, $products);
@@ -579,8 +682,13 @@ function syncMutationsFromDevice(PDO $pdo): void {
                         $serverId = (int) $existing['id'];
                     } else {
                         $stmt = $pdo->prepare(
-                            'INSERT INTO products (category_id, name, sku, description, cost_price, selling_price, current_stock, low_stock_threshold, is_active) 
-                             VALUES (:cat, :name, :sku, :desc, :cost, :price, :stock, :low, :active)'
+                            'INSERT INTO products (
+                                category_id, name, sku, description, cost_price, selling_price, current_stock, 
+                                low_stock_threshold, target_stock, unit, supplier_id, supplier_name, reseller_price, is_active
+                            ) VALUES (
+                                :cat, :name, :sku, :desc, :cost, :price, :stock, 
+                                :low, :target_stock, :unit, :supplier_id, :supplier_name, :reseller_price, :active
+                            )'
                         );
                         $stmt->execute([
                             ':cat' => $categoryId,
@@ -591,6 +699,11 @@ function syncMutationsFromDevice(PDO $pdo): void {
                             ':price' => sanitizeDecimal($payload['selling_price'] ?? 0),
                             ':stock' => sanitizeInt($payload['current_stock'] ?? 0),
                             ':low' => sanitizeInt($payload['low_stock_threshold'] ?? 10),
+                            ':target_stock' => sanitizeInt($payload['target_stock'] ?? 20),
+                            ':unit' => sanitizeString($payload['unit'] ?? 'sticks'),
+                            ':supplier_id' => sanitizeString($payload['supplier_id'] ?? null),
+                            ':supplier_name' => sanitizeString($payload['supplier_name'] ?? null),
+                            ':reseller_price' => isset($payload['reseller_price']) && $payload['reseller_price'] !== '' ? sanitizeDecimal($payload['reseller_price']) : null,
                             ':active' => !empty($payload['is_active']) ? 1 : 0,
                         ]);
                         $serverId = (int) $pdo->lastInsertId();
@@ -610,9 +723,12 @@ function syncMutationsFromDevice(PDO $pdo): void {
                     }
 
                     $stmt = $pdo->prepare(
-                        'UPDATE products SET category_id = :cat, name = :name, sku = :sku, description = :desc, 
-                                            cost_price = :cost, selling_price = :price, current_stock = :stock, 
-                                            low_stock_threshold = :low, is_active = :active 
+                        'UPDATE products SET 
+                            category_id = :cat, name = :name, sku = :sku, description = :desc, 
+                            cost_price = :cost, selling_price = :price, current_stock = :stock, 
+                            low_stock_threshold = :low, target_stock = :target_stock, unit = :unit,
+                            supplier_id = :supplier_id, supplier_name = :supplier_name, 
+                            reseller_price = :reseller_price, is_active = :active 
                          WHERE id = :id'
                     );
                     $stmt->execute([
@@ -624,6 +740,11 @@ function syncMutationsFromDevice(PDO $pdo): void {
                         ':price' => sanitizeDecimal($payload['selling_price'] ?? 0),
                         ':stock' => sanitizeInt($payload['current_stock'] ?? 0),
                         ':low' => sanitizeInt($payload['low_stock_threshold'] ?? 10),
+                        ':target_stock' => sanitizeInt($payload['target_stock'] ?? 20),
+                        ':unit' => sanitizeString($payload['unit'] ?? 'sticks'),
+                        ':supplier_id' => sanitizeString($payload['supplier_id'] ?? null),
+                        ':supplier_name' => sanitizeString($payload['supplier_name'] ?? null),
+                        ':reseller_price' => isset($payload['reseller_price']) && $payload['reseller_price'] !== '' ? sanitizeDecimal($payload['reseller_price']) : null,
                         ':active' => !empty($payload['is_active']) ? 1 : 0,
                         ':id' => $entityId,
                     ]);
@@ -639,6 +760,150 @@ function syncMutationsFromDevice(PDO $pdo): void {
                     $results['processed'][] = [
                         'uuid' => $uuid,
                         'serverId' => $entityId,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                }
+            } elseif ($entity === 'daily_closing') {
+                $closingData = $payload;
+                $date = $closingData['date'] ?? null;
+                if ($date) {
+                    $id = $closingData['id'] ?? "closing-{$date}";
+                    $status = !empty($closingData['status']) && in_array($closingData['status'], ['DRAFT', 'FINALIZED']) ? $closingData['status'] : 'DRAFT';
+                    $items = isset($closingData['items']) ? (is_string($closingData['items']) ? $closingData['items'] : json_encode($closingData['items'])) : '[]';
+
+                    $totalPrepared = (int) ($closingData['total_prepared'] ?? 0);
+                    $totalSold = (int) ($closingData['total_sold'] ?? 0);
+                    $totalUnsold = (int) ($closingData['total_unsold'] ?? 0);
+                    $totalSpoilage = (int) ($closingData['total_spoilage'] ?? 0);
+                    $totalSpoilageLoss = (float) ($closingData['total_spoilage_loss'] ?? 0);
+                    $totalRevenue = (float) ($closingData['total_revenue'] ?? 0);
+                    $totalCogs = (float) ($closingData['total_cogs'] ?? 0);
+                    $totalGrossProfit = (float) ($closingData['total_gross_profit'] ?? 0);
+
+                    $openingCash = (float) ($closingData['opening_cash'] ?? 0);
+                    $cashSales = (float) ($closingData['cash_sales'] ?? 0);
+                    $cashExpenses = (float) ($closingData['cash_expenses'] ?? 0);
+                    $billsAllocation = (float) ($closingData['bills_allocation'] ?? 0);
+                    $expectedCash = (float) ($closingData['expected_cash_on_hand'] ?? 0);
+                    $actualCash = (float) ($closingData['actual_cash_on_hand'] ?? 0);
+                    $cashDiscrepancy = (float) ($closingData['cash_discrepancy'] ?? 0);
+                    $notes = isset($closingData['notes']) ? sanitizeString($closingData['notes']) : null;
+                    $finalizedAt = !empty($closingData['finalized_at']) ? $closingData['finalized_at'] : ($status === 'FINALIZED' ? date('Y-m-d H:i:s') : null);
+
+                    $sql = "INSERT INTO daily_closings (
+                        id, date, status, total_prepared, total_sold, total_unsold, total_spoilage,
+                        total_spoilage_loss, total_revenue, total_cogs, total_gross_profit,
+                        opening_cash, cash_sales, cash_expenses, bills_allocation,
+                        expected_cash_on_hand, actual_cash_on_hand, cash_discrepancy,
+                        notes, items_data, finalized_at
+                    ) VALUES (
+                        :id, :date, :status, :tot_prep, :tot_sold, :tot_unsold, :tot_spoil,
+                        :tot_spoil_loss, :tot_rev, :tot_cogs, :tot_gp,
+                        :opening_cash, :cash_sales, :cash_exp, :bills_alloc,
+                        :expected_cash, :actual_cash, :cash_disc,
+                        :notes, :items, :finalized_at
+                    ) ON DUPLICATE KEY UPDATE
+                        status = VALUES(status),
+                        total_prepared = VALUES(total_prepared),
+                        total_sold = VALUES(total_sold),
+                        total_unsold = VALUES(total_unsold),
+                        total_spoilage = VALUES(total_spoilage),
+                        total_spoilage_loss = VALUES(total_spoilage_loss),
+                        total_revenue = VALUES(total_revenue),
+                        total_cogs = VALUES(total_cogs),
+                        total_gross_profit = VALUES(total_gross_profit),
+                        opening_cash = VALUES(opening_cash),
+                        cash_sales = VALUES(cash_sales),
+                        cash_expenses = VALUES(cash_expenses),
+                        bills_allocation = VALUES(bills_allocation),
+                        expected_cash_on_hand = VALUES(expected_cash_on_hand),
+                        actual_cash_on_hand = VALUES(actual_cash_on_hand),
+                        cash_discrepancy = VALUES(cash_discrepancy),
+                        notes = VALUES(notes),
+                        items_data = VALUES(items_data),
+                        finalized_at = VALUES(finalized_at)";
+
+                    $stmt = $pdo->prepare($sql);
+                    $stmt->execute([
+                        ':id' => $id,
+                        ':date' => $date,
+                        ':status' => $status,
+                        ':tot_prep' => $totalPrepared,
+                        ':tot_sold' => $totalSold,
+                        ':tot_unsold' => $totalUnsold,
+                        ':tot_spoil' => $totalSpoilage,
+                        ':tot_spoil_loss' => $totalSpoilageLoss,
+                        ':tot_rev' => $totalRevenue,
+                        ':tot_cogs' => $totalCogs,
+                        ':tot_gp' => $totalGrossProfit,
+                        ':opening_cash' => $openingCash,
+                        ':cash_sales' => $cashSales,
+                        ':cash_exp' => $cashExpenses,
+                        ':bills_alloc' => $billsAllocation,
+                        ':expected_cash' => $expectedCash,
+                        ':actual_cash' => $actualCash,
+                        ':cash_disc' => $cashDiscrepancy,
+                        ':notes' => $notes,
+                        ':items' => $items,
+                        ':finalized_at' => $finalizedAt,
+                    ]);
+
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'serverId' => 0,
+                        'entity' => $entity,
+                        'action' => $action,
+                    ];
+                }
+            } elseif ($entity === 'reorder') {
+                $orderData = $payload;
+                $orderDate = $orderData['order_date'] ?? null;
+                if ($orderDate) {
+                    $id = $orderData['id'] ?? "reorder-{$orderDate}";
+                    $basedOn = $orderData['based_on_date'] ?? null;
+                    $status = in_array($orderData['status'] ?? '', ['DRAFT', 'ORDERED', 'RECEIVED']) ? $orderData['status'] : 'DRAFT';
+                    $totalQty = (int)($orderData['total_quantity'] ?? 0);
+                    $totalCost = (float)($orderData['total_cost'] ?? 0.0);
+                    $supplier = $orderData['supplier_name'] ?? 'BBQ Supplier';
+                    $notes = $orderData['notes'] ?? null;
+                    $receivedAt = !empty($orderData['received_at']) ? date('Y-m-d H:i:s', strtotime($orderData['received_at'])) : null;
+                    $itemsJson = json_encode($orderData['items'] ?? []);
+
+                    $sql = 'INSERT INTO reorders (
+                        id, order_date, based_on_date, status, total_quantity, total_cost,
+                        supplier_name, notes, items_data, received_at, updated_at
+                    ) VALUES (
+                        :id, :order_date, :based_on_date, :status, :total_quantity, :total_cost,
+                        :supplier_name, :notes, :items_data, :received_at, NOW()
+                    ) ON DUPLICATE KEY UPDATE
+                        based_on_date = VALUES(based_on_date),
+                        status = VALUES(status),
+                        total_quantity = VALUES(total_quantity),
+                        total_cost = VALUES(total_cost),
+                        supplier_name = VALUES(supplier_name),
+                        notes = VALUES(notes),
+                        items_data = VALUES(items_data),
+                        received_at = VALUES(received_at),
+                        updated_at = NOW()';
+
+                    $stmt = $pdo->prepare($sql);
+                    $stmt->execute([
+                        ':id' => $id,
+                        ':order_date' => $orderDate,
+                        ':based_on_date' => $basedOn,
+                        ':status' => $status,
+                        ':total_quantity' => $totalQty,
+                        ':total_cost' => $totalCost,
+                        ':supplier_name' => $supplier,
+                        ':notes' => $notes,
+                        ':items_data' => $itemsJson,
+                        ':received_at' => $receivedAt,
+                    ]);
+
+                    $results['processed'][] = [
+                        'uuid' => $uuid,
+                        'serverId' => 0,
                         'entity' => $entity,
                         'action' => $action,
                     ];

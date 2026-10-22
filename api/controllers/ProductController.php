@@ -72,6 +72,12 @@ function listProducts(PDO $pdo): void {
         $params[':since'] = $since;
     }
 
+    $itemType = sanitizeString(getQueryParam('item_type'));
+    if ($itemType === 'product' || $itemType === 'supply') {
+        $where[] = 'p.item_type = :item_type';
+        $params[':item_type'] = $itemType;
+    }
+
     $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
     // Count total
@@ -97,14 +103,22 @@ function listProducts(PDO $pdo): void {
     $stmt->execute();
     $products = $stmt->fetchAll();
 
-    // Cast numeric fields
+    // Cast numeric and custom master fields
     $products = array_map(function ($p) {
         $p['id'] = (int) $p['id'];
         $p['category_id'] = (int) $p['category_id'];
+        $p['item_type'] = $p['item_type'] ?? 'product';
         $p['cost_price'] = (float) $p['cost_price'];
         $p['selling_price'] = (float) $p['selling_price'];
         $p['current_stock'] = (int) $p['current_stock'];
+        $p['initial_stock'] = isset($p['initial_stock']) ? (int) $p['initial_stock'] : (int) $p['current_stock'];
+        $p['initial_stock_date'] = $p['initial_stock_date'] ?? null;
         $p['low_stock_threshold'] = (int) $p['low_stock_threshold'];
+        $p['target_stock'] = isset($p['target_stock']) ? (int) $p['target_stock'] : 20;
+        $p['unit'] = $p['unit'] ?? 'sticks';
+        $p['supplier_id'] = $p['supplier_id'] ?? null;
+        $p['supplier_name'] = $p['supplier_name'] ?? null;
+        $p['reseller_price'] = isset($p['reseller_price']) && $p['reseller_price'] !== null ? (float) $p['reseller_price'] : null;
         $p['is_active'] = (bool) $p['is_active'];
         return $p;
     }, $products);
@@ -128,10 +142,18 @@ function getProduct(PDO $pdo, int $id): void {
 
     $product['id'] = (int) $product['id'];
     $product['category_id'] = (int) $product['category_id'];
+    $product['item_type'] = $product['item_type'] ?? 'product';
     $product['cost_price'] = (float) $product['cost_price'];
     $product['selling_price'] = (float) $product['selling_price'];
     $product['current_stock'] = (int) $product['current_stock'];
+    $product['initial_stock'] = isset($product['initial_stock']) ? (int) $product['initial_stock'] : (int) $product['current_stock'];
+    $product['initial_stock_date'] = $product['initial_stock_date'] ?? null;
     $product['low_stock_threshold'] = (int) $product['low_stock_threshold'];
+    $product['target_stock'] = isset($product['target_stock']) ? (int) $product['target_stock'] : 20;
+    $product['unit'] = $product['unit'] ?? 'sticks';
+    $product['supplier_id'] = $product['supplier_id'] ?? null;
+    $product['supplier_name'] = $product['supplier_name'] ?? null;
+    $product['reseller_price'] = isset($product['reseller_price']) && $product['reseller_price'] !== null ? (float) $product['reseller_price'] : null;
     $product['is_active'] = (bool) $product['is_active'];
 
     jsonResponse($product);
@@ -139,7 +161,14 @@ function getProduct(PDO $pdo, int $id): void {
 
 function createProduct(PDO $pdo): void {
     $data = getJsonBody();
-    $errors = validateRequired($data, ['name', 'sku', 'category_id', 'selling_price']);
+    $itemType = in_array($data['item_type'] ?? '', ['product', 'supply']) ? $data['item_type'] : 'product';
+
+    // selling_price is only required for 'product' type
+    $requiredFields = ['name', 'sku', 'category_id'];
+    if ($itemType === 'product') {
+        $requiredFields[] = 'selling_price';
+    }
+    $errors = validateRequired($data, $requiredFields);
     if ($errors) {
         jsonError('Validation failed', 422, $errors);
     }
@@ -151,9 +180,22 @@ function createProduct(PDO $pdo): void {
         jsonError('SKU already exists', 409);
     }
 
+    $stockVal = isset($data['initial_stock']) ? sanitizeInt($data['initial_stock']) : sanitizeInt($data['current_stock'] ?? 0);
+    $initialStockDate = !empty($data['initial_stock_date']) ? $data['initial_stock_date'] : '2026-10-19';
+    if ($initialStockDate < '2026-10-19') {
+        $initialStockDate = '2026-10-19';
+    }
+    // Supplies are never for sale
+    $sellingPrice = $itemType === 'supply' ? 0 : sanitizeDecimal($data['selling_price'] ?? 0);
+
     $stmt = $pdo->prepare(
-        'INSERT INTO products (category_id, name, sku, description, cost_price, selling_price, current_stock, low_stock_threshold, image_path, is_active) 
-         VALUES (:category_id, :name, :sku, :description, :cost_price, :selling_price, :stock, :threshold, :image, :active)'
+        'INSERT INTO products (
+            category_id, name, sku, description, item_type, cost_price, selling_price, current_stock, initial_stock, 
+            initial_stock_date, low_stock_threshold, target_stock, unit, supplier_id, supplier_name, reseller_price, image_path, is_active
+        ) VALUES (
+            :category_id, :name, :sku, :description, :item_type, :cost_price, :selling_price, :stock, :initial_stock, 
+            :initial_stock_date, :threshold, :target_stock, :unit, :supplier_id, :supplier_name, :reseller_price, :image, :active
+        )'
     );
 
     $stmt->execute([
@@ -161,10 +203,18 @@ function createProduct(PDO $pdo): void {
         ':name' => sanitizeString($data['name']),
         ':sku' => sanitizeString($data['sku']),
         ':description' => sanitizeString($data['description'] ?? null),
+        ':item_type' => $itemType,
         ':cost_price' => sanitizeDecimal($data['cost_price'] ?? 0),
-        ':selling_price' => sanitizeDecimal($data['selling_price']),
-        ':stock' => sanitizeInt($data['current_stock'] ?? 0),
+        ':selling_price' => $sellingPrice,
+        ':stock' => $stockVal,
+        ':initial_stock' => $stockVal,
+        ':initial_stock_date' => $initialStockDate,
         ':threshold' => sanitizeInt($data['low_stock_threshold'] ?? 10),
+        ':target_stock' => sanitizeInt($data['target_stock'] ?? 20),
+        ':unit' => sanitizeString($data['unit'] ?? 'sticks'),
+        ':supplier_id' => sanitizeString($data['supplier_id'] ?? null),
+        ':supplier_name' => sanitizeString($data['supplier_name'] ?? null),
+        ':reseller_price' => isset($data['reseller_price']) && $data['reseller_price'] !== '' ? sanitizeDecimal($data['reseller_price']) : null,
         ':image' => sanitizeString($data['image_path'] ?? null),
         ':active' => isset($data['is_active']) ? (int) $data['is_active'] : 1,
     ]);
@@ -172,8 +222,7 @@ function createProduct(PDO $pdo): void {
     $productId = (int) $pdo->lastInsertId();
 
     // Create initial inventory movement if stock > 0
-    $initialStock = sanitizeInt($data['current_stock'] ?? 0);
-    if ($initialStock > 0) {
+    if ($stockVal > 0) {
         $stmt = $pdo->prepare(
             'INSERT INTO inventory_movements (product_id, type, quantity_change, stock_before, stock_after, reference_type, notes) 
              VALUES (:product_id, :type, :qty, 0, :after, :ref_type, :notes)'
@@ -181,10 +230,10 @@ function createProduct(PDO $pdo): void {
         $stmt->execute([
             ':product_id' => $productId,
             ':type' => 'INITIAL',
-            ':qty' => $initialStock,
-            ':after' => $initialStock,
+            ':qty' => $stockVal,
+            ':after' => $stockVal,
             ':ref_type' => 'manual',
-            ':notes' => 'Initial stock on product creation',
+            ':notes' => 'Initial stock on product creation (Date: ' . $initialStockDate . ')',
         ]);
     }
 
@@ -211,17 +260,36 @@ function updateProduct(PDO $pdo, int $id): void {
         }
     }
 
+    $currentStock = isset($data['current_stock']) ? sanitizeInt($data['current_stock']) : (int) $existing['current_stock'];
+    $initialStock = isset($data['initial_stock']) ? sanitizeInt($data['initial_stock']) : (isset($data['current_stock']) ? sanitizeInt($data['current_stock']) : (int) ($existing['initial_stock'] ?? $currentStock));
+    $initialStockDate = !empty($data['initial_stock_date']) ? $data['initial_stock_date'] : ($existing['initial_stock_date'] ?? '2026-10-19');
+    if ($initialStockDate < '2026-10-19') {
+        $initialStockDate = '2026-10-19';
+    }
+    $itemType = in_array($data['item_type'] ?? '', ['product', 'supply']) ? $data['item_type'] : ($existing['item_type'] ?? 'product');
+    $sellingPrice = $itemType === 'supply' ? 0 : sanitizeDecimal($data['selling_price'] ?? $existing['selling_price']);
+
     $stmt = $pdo->prepare(
         'UPDATE products SET 
             category_id = :category_id,
             name = :name,
             sku = :sku,
             description = :description,
+            item_type = :item_type,
             cost_price = :cost_price,
             selling_price = :selling_price,
+            current_stock = :current_stock,
+            initial_stock = :initial_stock,
+            initial_stock_date = :initial_stock_date,
             low_stock_threshold = :threshold,
+            target_stock = :target_stock,
+            unit = :unit,
+            supplier_id = :supplier_id,
+            supplier_name = :supplier_name,
+            reseller_price = :reseller_price,
             image_path = :image,
-            is_active = :active
+            is_active = :active,
+            updated_at = NOW()
          WHERE id = :id'
     );
 
@@ -230,9 +298,18 @@ function updateProduct(PDO $pdo, int $id): void {
         ':name' => sanitizeString($data['name'] ?? $existing['name']),
         ':sku' => sanitizeString($data['sku'] ?? $existing['sku']),
         ':description' => sanitizeString($data['description'] ?? $existing['description']),
+        ':item_type' => $itemType,
         ':cost_price' => sanitizeDecimal($data['cost_price'] ?? $existing['cost_price']),
-        ':selling_price' => sanitizeDecimal($data['selling_price'] ?? $existing['selling_price']),
+        ':selling_price' => $sellingPrice,
+        ':current_stock' => $currentStock,
+        ':initial_stock' => $initialStock,
+        ':initial_stock_date' => $initialStockDate,
         ':threshold' => sanitizeInt($data['low_stock_threshold'] ?? $existing['low_stock_threshold']),
+        ':target_stock' => sanitizeInt($data['target_stock'] ?? ($existing['target_stock'] ?? 20)),
+        ':unit' => sanitizeString($data['unit'] ?? ($existing['unit'] ?? 'sticks')),
+        ':supplier_id' => sanitizeString($data['supplier_id'] ?? $existing['supplier_id']),
+        ':supplier_name' => sanitizeString($data['supplier_name'] ?? $existing['supplier_name']),
+        ':reseller_price' => isset($data['reseller_price']) && $data['reseller_price'] !== '' ? sanitizeDecimal($data['reseller_price']) : (isset($existing['reseller_price']) ? $existing['reseller_price'] : null),
         ':image' => sanitizeString($data['image_path'] ?? $existing['image_path']),
         ':active' => isset($data['is_active']) ? (int) $data['is_active'] : (int) $existing['is_active'],
         ':id' => $id,
@@ -261,7 +338,7 @@ function getLowStockProducts(PDO $pdo): void {
          FROM products p 
          LEFT JOIN categories c ON p.category_id = c.id 
          WHERE p.is_active = 1 AND p.current_stock <= p.low_stock_threshold 
-         ORDER BY (p.current_stock - p.low_stock_threshold) ASC, p.name ASC'
+         ORDER BY (CAST(p.current_stock AS SIGNED) - CAST(p.low_stock_threshold AS SIGNED)) ASC, p.name ASC'
     );
     $stmt->execute();
     $products = $stmt->fetchAll();
@@ -269,10 +346,16 @@ function getLowStockProducts(PDO $pdo): void {
     $products = array_map(function ($p) {
         $p['id'] = (int) $p['id'];
         $p['category_id'] = (int) $p['category_id'];
+        $p['item_type'] = $p['item_type'] ?? 'product';
         $p['cost_price'] = (float) $p['cost_price'];
         $p['selling_price'] = (float) $p['selling_price'];
         $p['current_stock'] = (int) $p['current_stock'];
         $p['low_stock_threshold'] = (int) $p['low_stock_threshold'];
+        $p['target_stock'] = isset($p['target_stock']) ? (int) $p['target_stock'] : 20;
+        $p['unit'] = $p['unit'] ?? 'sticks';
+        $p['supplier_id'] = $p['supplier_id'] ?? null;
+        $p['supplier_name'] = $p['supplier_name'] ?? null;
+        $p['reseller_price'] = isset($p['reseller_price']) && $p['reseller_price'] !== null ? (float) $p['reseller_price'] : null;
         $p['is_active'] = (bool) $p['is_active'];
         return $p;
     }, $products);

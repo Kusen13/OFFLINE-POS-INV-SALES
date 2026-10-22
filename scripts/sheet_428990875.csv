@@ -1,0 +1,21 @@
+LARGE,,,,,
+Product Name,Quantity,Reseller Price,Selling Price,Profit (per piece),Total Profit
+Pork BBQ,30,15,25,10,300
+Tenga ,20,14,20,6,120
+Isaw Manok,20,8,15,7,140
+Dugo,20,8,15,7,140
+Bulaklak,10,16,25,9,90
+Atay,10,14,20,6,60
+Bituka/Tumbong,10,15,20,5,50
+,,,,TOTAL = ,900
+,,,,,
+REGULAR,,,,,
+Product Name,Quantity,Reseller Price,Selling Price,Profit (per piece),Total Profit
+Pork BBQ,40,12,20,8,320
+Tenga ,20,11,18,7,140
+Isaw Manok,30,5,12,7,210
+Dugo,15,6,13,7,105
+Bulaklak,15,13,20,7,105
+Atay,15,11,18,7,105
+Bituka/Tumbong,15,12,18,6,90
+,,,,TOTAL = ,1075

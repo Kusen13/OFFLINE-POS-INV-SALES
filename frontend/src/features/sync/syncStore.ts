@@ -1,9 +1,10 @@
 import { create } from 'zustand';
-import { getPendingSales, markSalesSynced, markSalesFailed, getSyncCounts, resetFailedSales } from '../../db/salesRepository';
-import { replaceAllProducts, replaceAllCategories, replaceAllPaymentMethods, setLastProductSync, getLastProductSync, deleteLocalProduct, deleteLocalCategory } from '../../db/productRepository';
+import { getPendingSales, markSalesSynced, markSalesFailed, getSyncCounts, resetFailedSales, saveSale, getSaleByUuid } from '../../db/salesRepository';
+import { upsertProducts, replaceAllCategories, replaceAllPaymentMethods, setLastProductSync, deleteLocalProduct, deleteLocalCategory } from '../../db/productRepository';
 import { replaceAllExpenses, deleteLocalExpense } from '../../db/expenseRepository';
 import { getPendingMutations, markMutationsSynced, markMutationsFailed, getPendingMutationCount } from '../../db/mutationRepository';
 import { syncSalesToServer, fetchProductUpdates, syncMutationsToServer, fetchExpenseUpdates } from '../../api/sync';
+import { fetchSales } from '../../api/endpoints';
 import { checkServerHealth } from '../../api/client';
 
 interface SyncState {
@@ -23,6 +24,7 @@ interface SyncState {
   retryFailed: () => Promise<void>;
   syncProducts: () => Promise<void>;
   syncExpenses: () => Promise<void>;
+  syncSales: () => Promise<void>;
 }
 
 export const useSyncStore = create<SyncState>((set, get) => ({
@@ -130,11 +132,24 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       set({ syncProgress: 'Syncing expenses...' });
       await get().syncExpenses();
 
-      // 6. Update state
+      // 6. Download latest sales from server into IndexedDB (ensures phone/laptop have full sales record)
+      set({ syncProgress: 'Syncing sales history...' });
+      await get().syncSales();
+
+      // 7. Update state
       set({
         lastSyncTime: new Date().toISOString(),
         lastError: null,
       });
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('pos_sync_completed'));
+        try {
+          const ch = new BroadcastChannel('pos_channel');
+          ch.postMessage({ type: 'SYNC_COMPLETED' });
+          ch.close();
+        } catch (_) {}
+      }
 
       await get().refreshCounts();
 
@@ -154,13 +169,49 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     }
   },
 
+  syncSales: async () => {
+    try {
+      const salesRes = await fetchSales({ per_page: 200, with_items: true });
+      if (salesRes.data && Array.isArray(salesRes.data)) {
+        for (const s of salesRes.data) {
+          if (!s.uuid) continue;
+          const existing = await getSaleByUuid(s.uuid);
+          // If not stored yet or pending, cache it locally with SYNCED status
+          if (!existing) {
+            await saveSale({
+              uuid: s.uuid,
+              receipt_number: s.receipt_number,
+              items: s.items || [],
+              subtotal: Number(s.subtotal) || 0,
+              discount_amount: Number(s.discount_amount) || 0,
+              tax_amount: Number(s.tax_amount) || 0,
+              total_amount: Number(s.total_amount) || 0,
+              cash_tendered: s.cash_tendered !== null && s.cash_tendered !== undefined ? Number(s.cash_tendered) : null,
+              change_amount: s.change_amount !== null && s.change_amount !== undefined ? Number(s.change_amount) : null,
+              payment_method_id: s.payment_method_id,
+              payment_method_name: s.payment_method_name || 'Cash',
+              payment_reference: s.payment_reference || null,
+              source_device: s.source_device || 'server',
+              notes: s.notes || null,
+              sold_at: s.sold_at,
+              sync_status: 'SYNCED',
+              created_at: s.created_at,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to sync sales history:', error);
+    }
+  },
+
   syncProducts: async () => {
     try {
-      const lastSync = await getLastProductSync();
-      const data = await fetchProductUpdates(lastSync);
+      // Always fetch complete fresh catalog so stocks and pricing are 100% accurate from MySQL
+      const data = await fetchProductUpdates(null);
 
       if (data.products && data.products.length > 0) {
-        await replaceAllProducts(data.products);
+        await upsertProducts(data.products);
       }
 
       if (data.categories && data.categories.length > 0) {
@@ -172,6 +223,15 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       }
 
       await setLastProductSync(data.server_time);
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('pos_inventory_updated'));
+        try {
+          const ch = new BroadcastChannel('pos_channel');
+          ch.postMessage({ type: 'INVENTORY_UPDATED' });
+          ch.close();
+        } catch (_) {}
+      }
     } catch (error) {
       console.error('Failed to sync products:', error);
     }
