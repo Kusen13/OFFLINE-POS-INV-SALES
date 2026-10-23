@@ -9,6 +9,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { formatCurrency } from '../../utils/currency';
 import { SYSTEM_START_DATE } from '../../utils/date';
 import {
@@ -333,7 +334,7 @@ export function BillsPage() {
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-3 sm:space-y-4 animate-fade-in">
+    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-3.5 animate-fade-in pb-16 lg:pb-0">
       {/* Top Header Bar */}
       <div className="flex-shrink-0 flex items-center justify-between gap-2">
         <div className="hidden lg:block">
@@ -987,7 +988,7 @@ export function BillsPage() {
       {/* ============================================================== */}
 
       {/* 1. Add / Edit Bill Modal */}
-      {billModalOpen && (
+      {billModalOpen && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-sm animate-fade-in">
           <div className="bg-surface-900 border border-surface-700 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-slide-up">
             <div className="p-3.5 sm:p-4 border-b border-surface-700 flex items-center justify-between">
@@ -1092,11 +1093,12 @@ export function BillsPage() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 2. Quick Allocation Modal for Single Day */}
-      {quickAllocModal && (
+      {quickAllocModal && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-sm animate-fade-in">
           <div className="bg-surface-900 border border-surface-700 rounded-2xl w-full max-w-xs shadow-2xl p-4 animate-slide-up">
             <h3 className="text-sm font-bold text-surface-100">
@@ -1140,11 +1142,12 @@ export function BillsPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 3. Initial Capital Config Modal */}
-      {capitalModalOpen && (
+      {capitalModalOpen && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-sm animate-fade-in">
           <div className="bg-surface-900 border border-surface-700 rounded-2xl w-full max-w-sm shadow-2xl p-4 animate-slide-up">
             <h3 className="text-sm sm:text-base font-bold text-surface-100">
@@ -1213,11 +1216,12 @@ export function BillsPage() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 4. Add Capital Item Modal */}
-      {capitalItemModalOpen && (
+      {capitalItemModalOpen && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-sm animate-fade-in">
           <div className="bg-surface-900 border border-surface-700 rounded-2xl w-full max-w-sm shadow-2xl p-4 animate-slide-up">
             <h3 className="text-sm sm:text-base font-bold text-surface-100">Magdagdag ng Capital Item</h3>
@@ -1299,7 +1303,8 @@ export function BillsPage() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

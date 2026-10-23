@@ -71,10 +71,10 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="space-y-5 sm:space-y-6 animate-fade-in max-w-2xl">
+    <div className="space-y-4 sm:space-y-5 animate-fade-in max-w-2xl pb-16 lg:pb-0">
       <div className="hidden lg:block">
-        <h1 className="text-2xl font-bold text-surface-50">Settings</h1>
-        <p className="text-surface-400 mt-1">Configure your POS system</p>
+        <h1 className="text-xl sm:text-2xl font-bold text-surface-50 tracking-tight">Settings</h1>
+        <p className="text-surface-400 mt-0.5 text-xs sm:text-sm">Configure your POS system</p>
       </div>
 
       {/* Store Settings */}

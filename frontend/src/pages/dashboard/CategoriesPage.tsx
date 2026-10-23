@@ -135,78 +135,305 @@ export function CategoriesPage() {
     }
   };
 
+  const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 1024 ? 'cards' : 'table'
+  );
+
+  const filteredCategories = categories.filter(c => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return c.name.toLowerCase().includes(q) || (c.description && c.description.toLowerCase().includes(q));
+  });
+
+  const totalProducts = categories.reduce((sum, c) => sum + (c.product_count ?? 0), 0);
+  const activeCount = categories.filter(c => (c.product_count ?? 0) > 0).length;
+
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-3 sm:space-y-4 animate-fade-in">
-      <div className="flex items-center justify-between gap-2.5">
+    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-3.5 animate-fade-in pb-16 lg:pb-0">
+      {/* Page Header */}
+      <div className="flex-shrink-0 flex items-center justify-between gap-2">
         <div className="hidden lg:block">
           <h1 className="text-xl sm:text-2xl font-bold text-surface-50 tracking-tight">Categories</h1>
-          <p className="text-surface-400 mt-0.5 text-xs sm:text-sm">{categories.length} categories</p>
+          <p className="text-surface-400 mt-0.5 text-xs sm:text-sm">
+            Pamahalaan ang mga kategorya ng produkto at ayos ng menu
+          </p>
         </div>
-        <button
-          onClick={() => { setEditing(null); setShowForm(true); }}
-          className="px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-primary-600 text-white text-xs sm:text-sm font-semibold hover:bg-primary-500 transition-colors shadow-lg shadow-primary-600/20 flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ml-auto"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-          <span>Add Category</span>
-        </button>
+        <div className="flex items-center gap-1.5 w-full lg:w-auto justify-end">
+          <button
+            onClick={() => { setEditing(null); setShowForm(true); }}
+            className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs sm:text-sm font-semibold shadow-xs shadow-primary-600/20 transition-all cursor-pointer whitespace-nowrap"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            <span>+ Add Category</span>
+          </button>
+        </div>
       </div>
 
       {noticeMsg && (
-        <div className="bg-primary-500/10 border border-primary-500/30 rounded-xl p-3 flex items-center justify-between text-xs text-primary-300 font-medium">
+        <div className="flex-shrink-0 bg-primary-500/10 border border-primary-500/30 rounded-xl px-3 py-2 flex items-center justify-between text-xs text-primary-300 font-medium">
           <span>💾 {noticeMsg}</span>
-          <button onClick={() => setNoticeMsg(null)} className="text-surface-400 hover:text-white ml-2">✕</button>
+          <button onClick={() => setNoticeMsg(null)} className="text-surface-400 hover:text-white ml-2 cursor-pointer">✕</button>
         </div>
       )}
 
       {error && (
-        <div className="bg-danger-500/10 border border-danger-500/30 rounded-xl p-4">
-          <p className="text-danger-500 text-sm">⚠️ {error}</p>
+        <div className="flex-shrink-0 bg-danger-500/10 border border-danger-500/30 rounded-xl p-3">
+          <p className="text-danger-500 text-xs sm:text-sm">⚠️ {error}</p>
         </div>
       )}
 
-      {loading ? (
-        <div className="flex justify-center py-12"><div className="w-8 h-8 border-3 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" /></div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {categories.map(cat => (
-            <div key={cat.id} className="bg-surface-800/50 rounded-xl p-5 border border-surface-700/50 hover:border-primary-500/30 transition-all group">
-              <div className="flex items-start justify-between">
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-lg font-bold text-surface-100">{cat.name}</h3>
-                  {cat.description && <p className="text-surface-400 text-sm mt-1">{cat.description}</p>}
-                </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => { setEditing(cat); setShowForm(true); }}
-                    className="p-2 rounded-lg text-surface-300 hover:text-primary-400 bg-surface-700/60 hover:bg-surface-700 border border-surface-600/40 transition-colors"
-                    title="Edit Category"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                  </button>
-                  <button
-                    onClick={() => setDeleteConfirm(cat)}
-                    className="p-2 rounded-lg text-surface-300 hover:text-danger-500 bg-surface-700/60 hover:bg-surface-700 border border-surface-600/40 transition-colors"
-                    title="Delete Category"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                  </button>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 mt-4">
-                <span className="px-2.5 py-1 rounded-lg bg-primary-500/10 text-primary-400 text-xs font-bold">
-                  {cat.product_count ?? 0} products
-                </span>
-                <span className="text-surface-500 text-xs">Order: {cat.sort_order}</span>
-                {(cat.is_pending || cat.id < 0) && (
-                  <span className="px-2 py-0.5 rounded-full bg-warning-500/20 text-warning-400 text-xs font-semibold">
-                    ⏳ Pending Sync
-                  </span>
-                )}
+      {/* KPI Summary Cards */}
+      <div className="flex-shrink-0 grid grid-cols-3 gap-1.5 sm:gap-2">
+        <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
+          <div className="min-w-0">
+            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Total Categories</span>
+            <span className="text-xs sm:text-base font-extrabold text-surface-100 block truncate">{categories.length}</span>
+          </div>
+          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">uri</span>
+        </div>
+        <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
+          <div className="min-w-0">
+            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">With Items</span>
+            <span className="text-xs sm:text-base font-extrabold text-emerald-400 block truncate">{activeCount}</span>
+          </div>
+          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">may laman</span>
+        </div>
+        <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
+          <div className="min-w-0">
+            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Total Products</span>
+            <span className="text-xs sm:text-base font-extrabold text-primary-400 block truncate">{totalProducts}</span>
+          </div>
+          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">nakatalaga</span>
+        </div>
+      </div>
+
+      {/* Search Bar */}
+      <div className="flex-shrink-0 relative">
+        <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search categories by name or description..."
+          className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-surface-900 border border-surface-700 text-surface-100 text-xs placeholder:text-surface-500 focus:outline-none focus:border-primary-500 transition-colors"
+        />
+      </div>
+
+      {/* Main Table / Cards Card Container */}
+      <div className="flex-1 min-h-0 bg-surface-800/50 rounded-xl border border-surface-700/50 flex flex-col overflow-hidden shadow-sm">
+        {/* Header Bar with View Switcher */}
+        <div className="px-3 py-2 sm:px-4 sm:py-2.5 bg-surface-900/70 border-b border-surface-700/50 flex items-center justify-between gap-2 flex-nowrap shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-xs sm:text-sm font-bold text-surface-100 flex items-center gap-1.5 truncate">
+              <span>🏷️</span> <span>Talaan ng mga Kategorya</span>
+            </h3>
+            <span className="text-[10px] sm:text-xs text-surface-400 hidden sm:inline whitespace-nowrap">
+              ({filteredCategories.length} total)
+            </span>
+          </div>
+
+          {/* View Switcher */}
+          <div className="flex items-center gap-1 bg-surface-800/80 p-0.5 rounded-lg border border-surface-700/60 shrink-0">
+            <button
+              onClick={() => setViewMode('cards')}
+              className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                viewMode === 'cards'
+                  ? 'bg-primary-600 text-white shadow-xs'
+                  : 'text-surface-400 hover:text-surface-200'
+              }`}
+              title="Cards View"
+            >
+              <span>📱</span> <span className="hidden xs:inline">Cards</span>
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                viewMode === 'table'
+                  ? 'bg-primary-600 text-white shadow-xs'
+                  : 'text-surface-400 hover:text-surface-200'
+              }`}
+              title="Table View"
+            >
+              <span>📋</span> <span className="hidden xs:inline">Table</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Content Container */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {loading ? (
+            <div className="flex-1 min-h-0 flex items-center justify-center py-16">
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-8 h-8 border-3 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
+                <p className="text-xs text-surface-400">Kinukuha ang talaan ng mga kategorya...</p>
               </div>
             </div>
-          ))}
+          ) : filteredCategories.length === 0 ? (
+            <div className="flex-1 min-h-0 flex flex-col items-center justify-center py-12 text-center p-4">
+              <span className="text-3xl mb-2 block">🏷️</span>
+              <p className="text-surface-300 font-medium text-xs sm:text-sm">
+                {search ? 'Walang nahanap na kategorya' : 'Wala pang kategorya'}
+              </p>
+              <p className="text-surface-500 text-[11px] mt-0.5 mb-3">
+                {search ? 'Subukan ang ibang keyword sa paghahanap' : 'Magdagdag ng unang kategorya para sa inyong mga produkto'}
+              </p>
+              {!search && (
+                <button
+                  onClick={() => { setEditing(null); setShowForm(true); }}
+                  className="px-3.5 py-1.5 rounded-lg bg-primary-600 text-white text-xs font-semibold hover:bg-primary-500 transition-colors cursor-pointer"
+                >
+                  + Add Category
+                </button>
+              )}
+            </div>
+          ) : viewMode === 'cards' ? (
+            /* Cards View */
+            <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filteredCategories.map(cat => (
+                <div
+                  key={cat.id}
+                  className="bg-surface-900/60 rounded-xl p-3.5 border border-surface-700/60 hover:border-primary-500/40 transition-all flex flex-col justify-between group shadow-xs"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h4 className="text-sm font-bold text-surface-100 group-hover:text-primary-400 transition-colors truncate">
+                            {cat.name}
+                          </h4>
+                          {(cat.is_pending || cat.id < 0) && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              Pending Sync
+                            </span>
+                          )}
+                        </div>
+                        {cat.description ? (
+                          <p className="text-surface-400 text-xs mt-1 line-clamp-2">{cat.description}</p>
+                        ) : (
+                          <p className="text-surface-500 text-xs mt-1 italic">Walang deskripsyon</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => { setEditing(cat); setShowForm(true); }}
+                          className="p-1.5 rounded-lg text-surface-300 hover:text-primary-400 bg-surface-800 hover:bg-surface-700 border border-surface-700/60 transition-colors cursor-pointer"
+                          title="Edit Category"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirm(cat)}
+                          className="p-1.5 rounded-lg text-surface-300 hover:text-danger-400 bg-surface-800 hover:bg-surface-700 border border-surface-700/60 transition-colors cursor-pointer"
+                          title="Delete Category"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 mt-3 pt-2.5 border-t border-surface-700/40 text-[11px]">
+                    <span className="px-2 py-0.5 rounded-md bg-primary-500/10 text-primary-400 font-semibold border border-primary-500/20">
+                      {cat.product_count ?? 0} products
+                    </span>
+                    <span className="text-surface-400 font-medium">
+                      Order: <strong className="text-surface-200">{cat.sort_order}</strong>
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            /* Table View */
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="sticky top-0 bg-surface-900/95 z-10 backdrop-blur-xs border-b border-surface-700/80 text-[10px] font-bold text-surface-400 uppercase tracking-wider">
+                    <th className="px-3 py-2 w-16 text-center">Order</th>
+                    <th className="px-3 py-2">Category Name</th>
+                    <th className="px-3 py-2">Description</th>
+                    <th className="px-3 py-2 text-center">Products</th>
+                    <th className="px-3 py-2 text-center">Status</th>
+                    <th className="px-3 py-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-700/40 font-medium text-surface-200">
+                  {filteredCategories.map(cat => (
+                    <tr key={cat.id} className="hover:bg-surface-700/30 transition-colors">
+                      <td className="px-3 py-2 text-center text-surface-400 font-mono">
+                        {cat.sort_order}
+                      </td>
+                      <td className="px-3 py-2 font-bold text-surface-100">
+                        {cat.name}
+                      </td>
+                      <td className="px-3 py-2 text-surface-400 max-w-xs truncate">
+                        {cat.description || <span className="italic text-surface-600">—</span>}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <span className="px-2 py-0.5 rounded-md bg-primary-500/10 text-primary-400 font-bold border border-primary-500/20">
+                          {cat.product_count ?? 0}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {(cat.is_pending || cat.id < 0) ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 whitespace-nowrap">
+                            Pending Sync
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
+                            Active
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => { setEditing(cat); setShowForm(true); }}
+                            className="p-1 rounded text-surface-300 hover:text-primary-400 hover:bg-surface-700 transition-colors cursor-pointer"
+                            title="Edit Category"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => setDeleteConfirm(cat)}
+                            className="p-1 rounded text-surface-300 hover:text-danger-400 hover:bg-surface-700 transition-colors cursor-pointer"
+                            title="Delete Category"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Pinned Card Footer */}
+        <div className="flex-shrink-0 px-3 py-2 bg-surface-900/90 border-t border-surface-700/60 flex items-center justify-between text-[11px] text-surface-400">
+          <span className="truncate">
+            Kabuuang Kategorya: <strong className="text-surface-200">{filteredCategories.length}</strong>
+          </span>
+          <span className="truncate ml-2">
+            Kabuuang Produkto: <strong className="text-primary-400">{totalProducts}</strong>
+          </span>
+        </div>
+      </div>
 
       {/* Form modal */}
       {showForm && (

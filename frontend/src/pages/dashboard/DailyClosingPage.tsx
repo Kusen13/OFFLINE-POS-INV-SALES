@@ -568,7 +568,7 @@ export function DailyClosingPage() {
   }, [closing]);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-4 animate-fade-in">
+    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-3.5 animate-fade-in pb-16 lg:pb-0">
       {/* Page Header */}
       <div className="flex-shrink-0 flex items-center justify-between gap-2">
         <div className="hidden lg:block">

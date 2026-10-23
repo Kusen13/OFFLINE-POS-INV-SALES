@@ -82,8 +82,12 @@ export function SuppliersPage() {
   const openNew = () => { setEditing(null); setShowForm(true); };
   const openEdit = (s: Supplier) => { setEditing(s); setShowForm(true); };
 
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 1024 ? 'cards' : 'table'
+  );
+
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-4 animate-fade-in">
+    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-3.5 animate-fade-in pb-16 lg:pb-0">
       {/* Toast */}
       {toast && (
         <div className={`fixed top-4 right-4 z-[100] px-4 py-2.5 rounded-xl text-sm font-semibold shadow-xl animate-fade-in border
@@ -99,80 +103,216 @@ export function SuppliersPage() {
             Supplier Management
           </h1>
           <p className="text-surface-400 mt-0.5 text-xs sm:text-sm">
-            Listahan ng mga tinitindahan / reseller — puwede i-filter sa Re-order
+            Listahan ng mga supplier at reseller — puwede i-filter sa Re-order sheet
           </p>
         </div>
 
         <div className="flex items-center gap-1.5 w-full lg:w-auto justify-end">
           <button
             onClick={openNew}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs sm:text-sm font-semibold shadow-xs shadow-primary-600/20 transition-all cursor-pointer whitespace-nowrap"
+            className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs sm:text-sm font-semibold shadow-xs shadow-primary-600/20 transition-all cursor-pointer whitespace-nowrap"
           >
-            <span>➕</span> <span>Bagong Supplier</span>
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            <span>+ Add Supplier</span>
           </button>
         </div>
       </div>
 
-      {/* Summary Cards */}
+      {/* Compact KPI Summary Cards */}
       <div className="flex-shrink-0 grid grid-cols-3 gap-1.5 sm:gap-2">
-        <div className="p-2 sm:p-3 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs">
-          <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block">Total Suppliers</span>
-          <span className="text-sm sm:text-lg font-extrabold text-surface-100">{suppliers.length}</span>
+        <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
+          <div className="min-w-0">
+            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Total Suppliers</span>
+            <span className="text-xs sm:text-base font-extrabold text-surface-100 block truncate">{suppliers.length}</span>
+          </div>
+          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">tindahan</span>
         </div>
-        <div className="p-2 sm:p-3 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs">
-          <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block">Active</span>
-          <span className="text-sm sm:text-lg font-extrabold text-emerald-400">{activeCount}</span>
+        <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
+          <div className="min-w-0">
+            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Active</span>
+            <span className="text-xs sm:text-base font-extrabold text-emerald-400 block truncate">{activeCount}</span>
+          </div>
+          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">aktibo</span>
         </div>
-        <div className="p-2 sm:p-3 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs">
-          <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block">Inactive</span>
-          <span className="text-sm sm:text-lg font-extrabold text-surface-400">{suppliers.length - activeCount}</span>
+        <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
+          <div className="min-w-0">
+            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Inactive</span>
+            <span className="text-xs sm:text-base font-extrabold text-surface-400 block truncate">{suppliers.length - activeCount}</span>
+          </div>
+          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">nakatago</span>
         </div>
       </div>
 
-      {/* Search */}
-      <div className="flex-shrink-0">
+      {/* Search Input */}
+      <div className="flex-shrink-0 relative">
+        <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
         <input
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="🔍 Hanapin ang supplier (pangalan, contact, phone)..."
-          className="w-full px-3.5 py-2 rounded-xl bg-surface-800 border border-surface-700 text-surface-100 text-sm placeholder:text-surface-500 focus:outline-none focus:border-primary-500 transition-colors"
+          placeholder="Search supplier by name, contact, phone, or address..."
+          className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-surface-900 border border-surface-700 text-surface-100 text-xs placeholder:text-surface-500 focus:outline-none focus:border-primary-500 transition-colors"
         />
       </div>
 
-      {/* Supplier List */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        {loading ? (
-          <div className="flex items-center justify-center h-32 text-surface-400 text-sm">
-            <span className="animate-spin mr-2">⏳</span> Loading suppliers...
+      {/* Main Table / Cards Card Container */}
+      <div className="flex-1 min-h-0 bg-surface-800/50 rounded-xl border border-surface-700/50 flex flex-col overflow-hidden shadow-sm">
+        {/* Header Bar with View Switcher */}
+        <div className="px-3 py-2 sm:px-4 sm:py-2.5 bg-surface-900/70 border-b border-surface-700/50 flex items-center justify-between gap-2 flex-nowrap shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <h3 className="text-xs sm:text-sm font-bold text-surface-100 flex items-center gap-1.5 truncate">
+              <span>🏪</span> <span>Talaan ng mga Supplier</span>
+            </h3>
+            <span className="text-[10px] sm:text-xs text-surface-400 hidden sm:inline whitespace-nowrap">
+              ({filtered.length} total)
+            </span>
           </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-surface-500 gap-3">
-            <span className="text-4xl">🏪</span>
-            <p className="text-sm font-medium">
-              {search ? 'Walang nahanap.' : 'Wala pang suppliers. Mag-add ng bago!'}
-            </p>
-            {!search && (
-              <button
-                onClick={openNew}
-                className="px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-semibold cursor-pointer transition-colors"
-              >
-                ➕ Mag-add ng Supplier
-              </button>
-            )}
+
+          {/* View Switcher: [ 📱 Cards | 📋 Table ] */}
+          <div className="flex items-center gap-1 bg-surface-800/80 p-0.5 rounded-lg border border-surface-700/60 shrink-0">
+            <button
+              onClick={() => setViewMode('cards')}
+              className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                viewMode === 'cards'
+                  ? 'bg-primary-600 text-white shadow-xs'
+                  : 'text-surface-400 hover:text-surface-200'
+              }`}
+              title="Cards View"
+            >
+              <span>📱</span> <span className="hidden xs:inline">Cards</span>
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                viewMode === 'table'
+                  ? 'bg-primary-600 text-white shadow-xs'
+                  : 'text-surface-400 hover:text-surface-200'
+              }`}
+              title="Table View"
+            >
+              <span>📋</span> <span className="hidden xs:inline">Table</span>
+            </button>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3">
-            {filtered.map(s => (
-              <SupplierCard
-                key={s.id}
-                supplier={s}
-                onEdit={() => openEdit(s)}
-                onDelete={() => setDeletingId(s.id)}
-              />
-            ))}
-          </div>
-        )}
+        </div>
+
+        {/* Content Container */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {loading ? (
+            <div className="flex-1 min-h-0 flex items-center justify-center py-16">
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-8 h-8 border-3 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
+                <p className="text-xs text-surface-400">Kinukuha ang talaan ng mga supplier...</p>
+              </div>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex-1 min-h-0 flex flex-col items-center justify-center py-12 text-center">
+              <span className="text-3xl mb-2 block">🏪</span>
+              <p className="text-surface-300 font-medium text-xs sm:text-sm">
+                {search ? 'Walang nahanap na supplier' : 'Wala pang suppliers'}
+              </p>
+              <p className="text-surface-500 text-[11px] mt-0.5 mb-3">
+                {search ? 'Subukan ang ibang keyword' : 'Mag-add ng supplier upang magamit sa BBQ Re-order'}
+              </p>
+              {!search && (
+                <button
+                  onClick={openNew}
+                  className="px-3.5 py-1.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs font-semibold cursor-pointer shadow-xs transition-colors"
+                >
+                  + Add Supplier
+                </button>
+              )}
+            </div>
+          ) : viewMode === 'cards' ? (
+            <div className="p-2 sm:p-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-2.5">
+              {filtered.map(s => (
+                <SupplierCard
+                  key={s.id}
+                  supplier={s}
+                  onEdit={() => openEdit(s)}
+                  onDelete={() => setDeletingId(s.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead className="sticky top-0 bg-surface-900/95 border-b border-surface-700/60 z-10 backdrop-blur-xs shadow-xs">
+                <tr>
+                  <th className="px-3 py-2 text-[11px] font-bold text-surface-400 uppercase whitespace-nowrap">Supplier Name</th>
+                  <th className="px-3 py-2 text-[11px] font-bold text-surface-400 uppercase whitespace-nowrap hidden sm:table-cell">Contact Person</th>
+                  <th className="px-3 py-2 text-[11px] font-bold text-surface-400 uppercase whitespace-nowrap">Phone</th>
+                  <th className="px-3 py-2 text-[11px] font-bold text-surface-400 uppercase whitespace-nowrap hidden md:table-cell">Address</th>
+                  <th className="px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-center whitespace-nowrap">Status</th>
+                  <th className="px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-right whitespace-nowrap">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-700/30">
+                {filtered.map(s => (
+                  <tr key={s.id} className="hover:bg-surface-700/20 transition-colors">
+                    <td className="px-3 py-2 text-xs font-semibold text-surface-100 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        <span>🏪</span>
+                        <span>{s.name}</span>
+                      </div>
+                      {s.notes && <p className="text-[10px] text-surface-500 truncate max-w-xs">{s.notes}</p>}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-surface-300 whitespace-nowrap hidden sm:table-cell">
+                      {s.contact_person || '—'}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-surface-300 whitespace-nowrap">
+                      {s.phone ? (
+                        <a href={`tel:${s.phone}`} className="hover:text-primary-400 text-primary-300 transition-colors">
+                          {s.phone}
+                        </a>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-surface-400 whitespace-nowrap hidden md:table-cell">
+                      {s.address || '—'}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-center whitespace-nowrap">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                        s.is_active
+                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                          : 'bg-surface-700 text-surface-400 border-surface-600'
+                      }`}>
+                        {s.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => openEdit(s)}
+                          className="px-2 py-1 rounded bg-surface-700 hover:bg-surface-600 text-surface-200 text-xs font-semibold transition-colors cursor-pointer"
+                          title="Edit"
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button
+                          onClick={() => setDeletingId(s.id)}
+                          className="px-2 py-1 rounded bg-danger-500/10 hover:bg-danger-500/20 text-danger-400 text-xs font-semibold transition-colors cursor-pointer border border-danger-500/20"
+                          title="Delete"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Pinned Bottom Summary Footer */}
+        <div className="flex-shrink-0 px-3 py-2 bg-surface-900/90 border-t border-surface-700/60 flex items-center justify-between text-xs text-surface-400">
+          <span>Kabuuang mga supplier: <strong className="text-surface-100">{filtered.length}</strong></span>
+          <span className="text-[11px] text-surface-500 hidden sm:inline">Puwede i-filter sa BBQ Re-order sheet</span>
+        </div>
       </div>
 
       {/* Form Modal */}

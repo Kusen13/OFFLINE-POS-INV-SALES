@@ -458,7 +458,7 @@ export function ReorderPage() {
   }, [displayedItems]);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-3.5 animate-fade-in">
+    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-3.5 animate-fade-in pb-16 lg:pb-0">
       {/* Toast Alert */}
       {toastMsg && (
         <div className="fixed top-4 right-4 z-50 bg-emerald-500 text-white font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 animate-slide-up">
