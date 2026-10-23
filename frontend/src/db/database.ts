@@ -29,7 +29,7 @@ export interface PendingMutation {
 
 // Database name and version
 const DB_NAME = 'pos_offline_db';
-const DB_VERSION = 10;
+const DB_VERSION = 11;
 
 // Store names
 export const STORES = {
@@ -354,6 +354,11 @@ export async function getDB(): Promise<PosDB> {
         } catch (e) {
           console.warn('[DB v10] Migration error:', e);
         }
+      }
+
+      // ── v11 migration: Compatibility with existing version 11 browser stores ──
+      if (oldVersion < 11) {
+        console.log('[DB v11] Database opened with version 11.');
       }
     },
     blocked() {
