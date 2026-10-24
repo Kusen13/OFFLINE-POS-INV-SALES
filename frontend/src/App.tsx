@@ -24,6 +24,7 @@ function App() {
   const checkServer = useSyncStore(s => s.checkServer);
   const syncProducts = useSyncStore(s => s.syncProducts);
   const syncExpenses = useSyncStore(s => s.syncExpenses);
+  const performSync = useSyncStore(s => s.performSync);
 
   // Periodic background auto-sync + auto-prime offline IndexedDB cache
   useEffect(() => {
@@ -37,8 +38,14 @@ function App() {
       try {
         const reachable = await checkServer();
         if (reachable) {
-          await syncProducts();
-          await syncExpenses();
+          // If there are pending sales or mutations from offline moments, auto-flush them now!
+          const counts = useSyncStore.getState();
+          if (counts.pendingCount > 0) {
+            await performSync();
+          } else {
+            await syncProducts();
+            await syncExpenses();
+          }
           await refreshCounts();
         }
       } catch (_) {
@@ -52,10 +59,15 @@ function App() {
     refreshCounts();
     runAutoSync();
 
-    // 2. Poll every 12 seconds in background
-    const timer = setInterval(runAutoSync, 12000);
+    // 2. Poll every 10 seconds in background
+    const timer = setInterval(runAutoSync, 10000);
 
-    // 3. Immediately sync whenever phone screen unlocks or user returns to app
+    // 3. Immediately auto-flush whenever the device reconnects to Wi-Fi / network
+    const handleOnline = () => {
+      runAutoSync();
+    };
+
+    // 4. Immediately sync whenever phone screen unlocks or user returns to app
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         runAutoSync();
@@ -65,15 +77,17 @@ function App() {
       runAutoSync();
     };
 
+    window.addEventListener('online', handleOnline);
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', handleFocus);
 
     return () => {
       clearInterval(timer);
+      window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [refreshCounts, checkServer, syncProducts, syncExpenses]);
+  }, [refreshCounts, checkServer, syncProducts, syncExpenses, performSync]);
 
   return (
     <Routes>

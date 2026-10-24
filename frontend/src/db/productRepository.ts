@@ -356,6 +356,25 @@ export async function adjustProductStock(
     reason: reason || (delta > 0 ? 'Mabilisang Dagdag' : 'Mabilisang Bawas'),
   });
 
+  // Direct push to server if online (skip if type is SALE because sale endpoint already decrements stock on server)
+  if (type !== 'SALE' && productId > 0) {
+    try {
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        await updateProduct(productId, { current_stock: stockAfter } as any);
+      } else {
+        throw new Error('Offline');
+      }
+    } catch {
+      try {
+        await addPendingMutation({
+          entity: 'product',
+          action: 'update',
+          payload: { ...product },
+        });
+      } catch { /* ignore */ }
+    }
+  }
+
   return product;
 }
 

@@ -22,7 +22,7 @@ import { nowISO } from '../../utils/date';
 import { saveSale, generateReceiptNumber } from '../../db/salesRepository';
 import { getActiveProducts, getAllCategories, getAllPaymentMethods, adjustProductStock } from '../../db/productRepository';
 import { creditSaleToDailyClosing } from '../../db/closingRepository';
-import { fetchProductUpdates } from '../../api/sync';
+import { fetchProductUpdates, syncSalesToServer } from '../../api/sync';
 import { replaceAllProducts, replaceAllCategories, replaceAllPaymentMethods, setLastProductSync } from '../../db/productRepository';
 import type { Product, Category } from '../../types/product';
 import type { PaymentMethod, PendingSale } from '../../types/sale';
@@ -191,6 +191,22 @@ export function POSPage() {
         sync_status: 'PENDING',
         created_at: nowISO(),
       };
+
+      // ── Direct Online Write ──
+      // If connected to the server, push directly to MySQL database immediately!
+      try {
+        if (typeof navigator === 'undefined' || navigator.onLine) {
+          const syncRes = await syncSalesToServer([sale]);
+          if (syncRes && (syncRes.synced?.length > 0 || syncRes.duplicates?.length > 0)) {
+            sale.sync_status = 'SYNCED';
+            sale.synced_at = new Date().toISOString();
+          }
+        }
+      } catch (directErr) {
+        // Fallback: device is offline or network timed out — keep as PENDING for background auto-sync
+        console.info('Offline transaction queued for auto-sync:', directErr);
+        sale.sync_status = 'PENDING';
+      }
 
       await saveSale(sale);
 
