@@ -1,8 +1,8 @@
 import { create } from 'zustand';
-import { getPendingSales, markSalesSynced, markSalesFailed, getSyncCounts, resetFailedSales, saveSale, getSaleByUuid } from '../../db/salesRepository';
+import { getPendingSales, markSalesSynced, markSalesFailed, getSyncCounts, resetFailedSales, saveSale, getSaleByUuid, clearFailedSales } from '../../db/salesRepository';
 import { upsertProducts, replaceAllCategories, replaceAllPaymentMethods, setLastProductSync, deleteLocalProduct, deleteLocalCategory } from '../../db/productRepository';
 import { replaceAllExpenses, deleteLocalExpense } from '../../db/expenseRepository';
-import { getPendingMutations, markMutationsSynced, markMutationsFailed, getPendingMutationCount } from '../../db/mutationRepository';
+import { getPendingMutations, markMutationsSynced, markMutationsFailed, getPendingMutationCount, clearFailedMutations } from '../../db/mutationRepository';
 import { syncSalesToServer, fetchProductUpdates, syncMutationsToServer, fetchExpenseUpdates } from '../../api/sync';
 import { fetchSales } from '../../api/endpoints';
 import { checkServerHealth } from '../../api/client';
@@ -22,6 +22,7 @@ interface SyncState {
   refreshCounts: () => Promise<void>;
   checkServer: () => Promise<boolean>;
   retryFailed: () => Promise<void>;
+  clearFailed: () => Promise<number>;
   syncProducts: () => Promise<void>;
   syncExpenses: () => Promise<void>;
   syncSales: () => Promise<void>;
@@ -167,6 +168,13 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       await get().refreshCounts();
       await get().performSync();
     }
+  },
+
+  clearFailed: async () => {
+    const salesCount = await clearFailedSales();
+    const mutCount = await clearFailedMutations();
+    await get().refreshCounts();
+    return salesCount + mutCount;
   },
 
   syncSales: async () => {

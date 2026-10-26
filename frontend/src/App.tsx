@@ -18,6 +18,8 @@ import { SettingsPage } from './pages/dashboard/SettingsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { useSyncStore } from './features/sync/syncStore';
 import { seedDefaultData } from './db/seedData';
+import { clearFailedSales } from './db/salesRepository';
+import { clearFailedMutations } from './db/mutationRepository';
 
 function App() {
   const refreshCounts = useSyncStore(s => s.refreshCounts);
@@ -30,6 +32,16 @@ function App() {
   useEffect(() => {
     // Seed default suppliers + order items on first run (non-blocking)
     seedDefaultData().catch(() => {});
+
+    // Automatically purge any stuck failed sales or mutations from earlier test attempts
+    Promise.all([
+      clearFailedSales(),
+      clearFailedMutations(),
+    ]).then(([s, m]) => {
+      if (s > 0 || m > 0) {
+        refreshCounts();
+      }
+    }).catch(() => {});
 
     let isSyncing = false;
     const runAutoSync = async () => {

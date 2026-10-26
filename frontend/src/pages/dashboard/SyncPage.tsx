@@ -5,8 +5,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useSyncStore } from '../../features/sync/syncStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
-import { getAllSales, resetFailedSales, cleanupOldSyncedSales } from '../../db/salesRepository';
-import { getPendingMutations, type PendingMutation } from '../../db/mutationRepository';
+import { getAllSales, resetFailedSales, cleanupOldSyncedSales, deleteSale, clearFailedSales } from '../../db/salesRepository';
+import { getPendingMutations, deleteMutation, clearFailedMutations, type PendingMutation } from '../../db/mutationRepository';
 import { formatCurrency } from '../../utils/currency';
 import { formatDateTime, getRelativeTime } from '../../utils/date';
 import type { PendingSale } from '../../types/sale';
@@ -52,6 +52,36 @@ export function SyncPage() {
   async function handleRetryFailed() {
     const count = await resetFailedSales();
     setActionMsg(`${count} failed sale(s) reset to pending`);
+    await refreshCounts();
+    await loadData();
+    setTimeout(() => setActionMsg(''), 3000);
+  }
+
+  async function handleClearFailed() {
+    if (!confirm('Sigurado ka bang nais mong burahin ang lahat ng failed transactions?')) return;
+    const [salesDeleted, mutsDeleted] = await Promise.all([
+      clearFailedSales(),
+      clearFailedMutations(),
+    ]);
+    setActionMsg(`${salesDeleted + mutsDeleted} failed transaction(s) deleted`);
+    await refreshCounts();
+    await loadData();
+    setTimeout(() => setActionMsg(''), 3000);
+  }
+
+  async function handleDeleteSale(uuid: string, receiptNumber: string) {
+    if (!confirm(`Burahin ang transaksyon ${receiptNumber}?`)) return;
+    await deleteSale(uuid);
+    setActionMsg(`Nai-delete ang resibo #${receiptNumber}`);
+    await refreshCounts();
+    await loadData();
+    setTimeout(() => setActionMsg(''), 3000);
+  }
+
+  async function handleDeleteMutation(id: string) {
+    if (!confirm('Burahin ang offline mutation na ito?')) return;
+    await deleteMutation(id);
+    setActionMsg('Nai-delete ang offline mutation');
     await refreshCounts();
     await loadData();
     setTimeout(() => setActionMsg(''), 3000);
@@ -158,12 +188,20 @@ export function SyncPage() {
         </button>
 
         {failedCount > 0 && (
-          <button
-            onClick={handleRetryFailed}
-            className="px-3 py-2 sm:py-2.5 rounded-xl bg-warning-600/20 text-warning-400 text-xs sm:text-sm font-semibold border border-warning-500/30 hover:bg-warning-600/30 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            🔄 Retry Failed ({failedCount})
-          </button>
+          <>
+            <button
+              onClick={handleRetryFailed}
+              className="px-3 py-2 sm:py-2.5 rounded-xl bg-warning-600/20 text-warning-400 text-xs sm:text-sm font-semibold border border-warning-500/30 hover:bg-warning-600/30 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              🔄 Retry Failed ({failedCount})
+            </button>
+            <button
+              onClick={handleClearFailed}
+              className="px-3 py-2 sm:py-2.5 rounded-xl bg-danger-600/20 text-danger-400 text-xs sm:text-sm font-semibold border border-danger-500/30 hover:bg-danger-600/30 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              🗑️ Burahin ang Failed ({failedCount})
+            </button>
+          </>
         )}
 
         {syncedCount > 0 && (
@@ -243,9 +281,20 @@ export function SyncPage() {
                         {m.payload?.name || m.payload?.description || `ID: ${m.entityId}`}
                       </span>
                     </div>
-                    <span className="text-warning-400 font-medium text-[10px] whitespace-nowrap shrink-0">
-                      ⏳ Pending
-                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`font-medium text-[10px] whitespace-nowrap ${
+                        m.status === 'FAILED' ? 'text-danger-400' : 'text-warning-400'
+                      }`}>
+                        {m.status === 'FAILED' ? '❌ Failed' : '⏳ Pending'}
+                      </span>
+                      <button
+                        onClick={() => handleDeleteMutation(m.id)}
+                        className="px-2 py-0.5 rounded bg-danger-500/20 text-danger-400 hover:bg-danger-500/30 text-[10px] font-semibold border border-danger-500/30 cursor-pointer"
+                        title="Burahin ang mutation"
+                      >
+                        🗑️ Burahin
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -356,7 +405,18 @@ export function SyncPage() {
 
                           <div className="flex items-center justify-between mt-1 text-[11px] text-surface-400">
                             <span>{formatDateTime(sale.sold_at)}</span>
-                            <span>{sale.items.length} items</span>
+                            <div className="flex items-center gap-2">
+                              <span>{sale.items.length} items</span>
+                              {sale.sync_status !== 'SYNCED' && (
+                                <button
+                                  onClick={() => handleDeleteSale(sale.uuid, sale.receipt_number)}
+                                  className="px-2 py-0.5 rounded bg-danger-500/20 text-danger-400 hover:bg-danger-500/30 text-[10px] font-semibold border border-danger-500/30 cursor-pointer"
+                                  title="Burahin ang transaksyon"
+                                >
+                                  🗑️ Burahin
+                                </button>
+                              )}
+                            </div>
                           </div>
 
                           {sale.sync_error && (
@@ -386,6 +446,9 @@ export function SyncPage() {
                           </th>
                           <th className="px-2.5 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-right whitespace-nowrap">
                             Total
+                          </th>
+                          <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-center whitespace-nowrap">
+                            Aksyon
                           </th>
                         </tr>
                       </thead>
@@ -419,6 +482,19 @@ export function SyncPage() {
                             </td>
                             <td className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-right text-xs font-bold text-surface-100 whitespace-nowrap">
                               {formatCurrency(sale.total_amount)}
+                            </td>
+                            <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-center text-xs whitespace-nowrap">
+                              {sale.sync_status !== 'SYNCED' ? (
+                                <button
+                                  onClick={() => handleDeleteSale(sale.uuid, sale.receipt_number)}
+                                  className="px-2 py-0.5 rounded bg-danger-500/20 text-danger-400 hover:bg-danger-500/30 text-[10px] font-semibold border border-danger-500/30 cursor-pointer"
+                                  title="Burahin ang transaksyon"
+                                >
+                                  🗑️ Burahin
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-surface-500">—</span>
+                              )}
                             </td>
                           </tr>
                         ))}

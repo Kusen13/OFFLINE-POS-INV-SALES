@@ -176,6 +176,28 @@ export async function cleanupOldSyncedSales(daysToKeep: number = 30): Promise<nu
 }
 
 /**
+ * Delete a specific sale by UUID (e.g. discard a test or failed sale)
+ */
+export async function deleteSale(uuid: string): Promise<void> {
+  const db = await getDB();
+  await db.delete('pendingSales', uuid);
+}
+
+/**
+ * Delete all failed sales from IndexedDB
+ */
+export async function clearFailedSales(): Promise<number> {
+  const db = await getDB();
+  const failed = await db.getAllFromIndex('pendingSales', 'by-status', 'FAILED');
+  const tx = db.transaction('pendingSales', 'readwrite');
+  for (const sale of failed) {
+    await tx.store.delete(sale.uuid);
+  }
+  await tx.done;
+  return failed.length;
+}
+
+/**
  * Generate a unique receipt number
  * Format: POS-YYYYMMDD-XXXX (e.g., POS-20261019-0001)
  */

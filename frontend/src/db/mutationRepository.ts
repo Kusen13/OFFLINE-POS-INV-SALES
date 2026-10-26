@@ -82,3 +82,26 @@ export async function getPendingMutationCount(): Promise<number> {
   const all = await db.getAll('pendingMutations');
   return all.filter(m => m.status === 'PENDING').length;
 }
+
+/**
+ * Delete a specific mutation by ID
+ */
+export async function deleteMutation(id: string): Promise<void> {
+  const db = await getDB();
+  await db.delete('pendingMutations', id);
+}
+
+/**
+ * Clear all failed mutations from IndexedDB
+ */
+export async function clearFailedMutations(): Promise<number> {
+  const db = await getDB();
+  const all = await db.getAll('pendingMutations');
+  const failed = all.filter(m => m.status === 'FAILED');
+  const tx = db.transaction('pendingMutations', 'readwrite');
+  for (const m of failed) {
+    await tx.store.delete(m.id);
+  }
+  await tx.done;
+  return failed.length;
+}
