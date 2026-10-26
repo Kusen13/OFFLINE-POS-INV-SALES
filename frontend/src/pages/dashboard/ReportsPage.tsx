@@ -3,20 +3,23 @@ import { formatCurrency } from '../../utils/currency';
 import { fetchProfitReport, fetchExpenses } from '../../api/endpoints';
 import { getAllDailyClosings } from '../../db/closingRepository';
 import { getAllExpenses } from '../../db/expenseRepository';
+import { getAllReorderSheets } from '../../db/reorderRepository';
 import type { Expense } from '../../types/inventory';
 import type { DailyClosing } from '../../types/closing';
+import type { ReorderSheet } from '../../types/reorder';
 
 export function ReportsPage() {
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [loading, setLoading] = useState(true);
   const [closings, setClosings] = useState<DailyClosing[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [reorders, setReorders] = useState<ReorderSheet[]>([]);
   const [serverProfit, setServerProfit] = useState<{ total_revenue: number; total_cost: number; gross_profit: number } | null>(null);
 
-  // Responsive & Pagination States
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>('table');
-  const [mobileTab, setMobileTab] = useState<'daily' | 'expenses'>('daily');
-  const [pageSize, setPageSize] = useState<number>(7);
+  // Responsive & View States
+  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+  const [activeTab, setActiveTab] = useState<'daily' | 'expenses'>('daily');
+  const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [filterActiveOnly, setFilterActiveOnly] = useState<boolean>(false);
 
@@ -24,7 +27,6 @@ export function ReportsPage() {
     setLoading(true);
     try {
       const startDate = `${monthStr}-01`;
-      // calculate last day of month
       const [year, month] = monthStr.split('-').map(Number);
       const lastDay = new Date(year, month, 0).getDate();
       const endDate = `${monthStr}-${String(lastDay).padStart(2, '0')}`;
@@ -51,6 +53,11 @@ export function ReportsPage() {
       const allClosings = await getAllDailyClosings();
       const monthClosings = allClosings.filter(c => c.date.startsWith(monthStr));
       setClosings(monthClosings);
+
+      // 4. Load reorder sheets for delivered/in-order cost
+      const allReorders = await getAllReorderSheets();
+      const monthReorders = allReorders.filter(r => r.order_date.startsWith(monthStr));
+      setReorders(monthReorders);
     } catch (err) {
       console.error('Failed to load reports data', err);
     } finally {
@@ -69,9 +76,12 @@ export function ReportsPage() {
     const totalDaysInMonth = new Date(year, month, 0).getDate();
     const days = [];
 
-    // Map closings and expenses by date
+    // Map closings, reorders, and expenses by date
     const closingsByDate = new Map<string, DailyClosing>();
     closings.forEach(c => closingsByDate.set(c.date, c));
+
+    const reordersByDate = new Map<string, ReorderSheet>();
+    reorders.forEach(r => reordersByDate.set(r.order_date, r));
 
     const expensesByDate = new Map<string, number>();
     expenses.forEach(e => {
@@ -81,7 +91,25 @@ export function ReportsPage() {
     for (let d = 1; d <= totalDaysInMonth; d++) {
       const dateStr = `${selectedMonth}-${String(d).padStart(2, '0')}`;
       const closing = closingsByDate.get(dateStr);
+      const reorder = reordersByDate.get(dateStr);
       const dayOpex = expensesByDate.get(dateStr) || 0;
+
+      let inOrderCost = 0;
+      let unsoldCostValue = 0;
+      let unsoldQty = 0;
+      let unsoldRetailValue = 0;
+
+      if (closing && closing.items && closing.items.length > 0) {
+        inOrderCost = closing.items.reduce((sum, it) => sum + (Number(it.received_qty || 0) * Number(it.unit_cost || 0)), 0);
+        unsoldCostValue = closing.items.reduce((sum, it) => sum + (Number(it.unsold_qty || 0) * Number(it.unit_cost || 0)), 0);
+        unsoldQty = closing.items.reduce((sum, it) => sum + Number(it.unsold_qty || 0), 0);
+        unsoldRetailValue = closing.items.reduce((sum, it) => sum + (Number(it.unsold_qty || 0) * Number(it.selling_price || 0)), 0);
+      }
+
+      // Fallback for inOrderCost if not detailed in closing items but reorder exists
+      if (inOrderCost === 0 && reorder && reorder.total_cost > 0) {
+        inOrderCost = reorder.total_cost;
+      }
 
       const sales = closing ? closing.total_revenue : 0;
       const cogs = closing ? closing.total_cogs : 0;
@@ -94,18 +122,22 @@ export function ReportsPage() {
         dayNumber: d,
         date: dateStr,
         sales,
+        inOrderCost,
         cogs,
+        unsoldCostValue,
+        unsoldQty,
+        unsoldRetailValue,
         grossProfit,
         opex: dayOpex,
         spoilageLoss,
         netIncome,
         cashOnHand,
-        hasActivity: sales > 0 || dayOpex > 0 || spoilageLoss > 0 || cashOnHand > 0,
+        hasActivity: sales > 0 || inOrderCost > 0 || unsoldCostValue > 0 || dayOpex > 0 || spoilageLoss > 0 || cashOnHand > 0,
       });
     }
 
     return days;
-  }, [selectedMonth, closings, expenses]);
+  }, [selectedMonth, closings, reorders, expenses]);
 
   // Grand totals for the month
   const monthSummary = useMemo(() => {
@@ -113,13 +145,15 @@ export function ReportsPage() {
     let totalCogs = calendarDays.reduce((s, d) => s + d.cogs, 0);
     let totalGrossProfit = totalSales - totalCogs;
 
-    // Fallback to server profit report if no local closings recorded yet for this month
     if (totalSales === 0 && serverProfit && serverProfit.total_revenue > 0) {
       totalSales = serverProfit.total_revenue;
       totalCogs = serverProfit.total_cost;
       totalGrossProfit = serverProfit.gross_profit;
     }
 
+    const totalInOrder = calendarDays.reduce((s, d) => s + d.inOrderCost, 0);
+    const totalUnsoldCost = calendarDays.reduce((s, d) => s + d.unsoldCostValue, 0);
+    const totalUnsoldQty = calendarDays.reduce((s, d) => s + d.unsoldQty, 0);
     const totalOpex = calendarDays.reduce((s, d) => s + d.opex, 0);
     const totalSpoilage = calendarDays.reduce((s, d) => s + d.spoilageLoss, 0);
     const totalNetIncome = totalGrossProfit - (totalOpex + totalSpoilage);
@@ -127,7 +161,10 @@ export function ReportsPage() {
 
     return {
       totalSales,
+      totalInOrder,
       totalCogs,
+      totalUnsoldCost,
+      totalUnsoldQty,
       totalGrossProfit,
       totalOpex,
       totalSpoilage,
@@ -163,17 +200,33 @@ export function ReportsPage() {
   };
 
   const handleExportCSV = () => {
-    const headers = ['Day', 'Date', 'Sales Revenue', 'COGS', 'Gross Profit', 'OPEX', 'Spoilage Loss', 'Net Income', 'Cash On-Hand'];
+    const headers = [
+      'Day',
+      'Date',
+      'Sales Revenue',
+      'In-Order Cost',
+      'COGS (Sold Cost)',
+      'Unsold Stock Value (Cost)',
+      'Unsold Qty',
+      'Gross Profit',
+      'OPEX',
+      'Spoilage Loss',
+      'Cash On-Hand',
+      'Net Income',
+    ];
     const rows = calendarDays.map(d => [
       d.dayNumber,
       d.date,
       d.sales.toFixed(2),
+      d.inOrderCost.toFixed(2),
       d.cogs.toFixed(2),
+      d.unsoldCostValue.toFixed(2),
+      d.unsoldQty,
       d.grossProfit.toFixed(2),
       d.opex.toFixed(2),
       d.spoilageLoss.toFixed(2),
-      d.netIncome.toFixed(2),
       d.cashOnHand.toFixed(2),
+      d.netIncome.toFixed(2),
     ]);
 
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -188,253 +241,262 @@ export function ReportsPage() {
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-3.5 animate-fade-in pb-16 lg:pb-0">
+    <div className="flex-1 min-h-0 flex flex-col space-y-2 sm:space-y-2.5 animate-fade-in pb-16 lg:pb-0 w-full overflow-hidden">
       {/* Header Bar */}
-      <div className="flex-shrink-0 flex items-center justify-between gap-2.5">
-        <div className="hidden lg:block">
-          <h1 className="text-xl sm:text-2xl font-bold text-surface-50">Financial Reports & P&L</h1>
-          <p className="text-surface-400 mt-0.5 text-xs sm:text-sm">
-            Buwanang Income Statement, Cost of Goods Sold, at Malinis na Kita (Net Profit)
+      <div className="flex-shrink-0 flex items-center justify-between gap-2">
+        <div>
+          <h1 className="text-lg sm:text-xl font-bold text-surface-50 flex items-center gap-1.5">
+            <span>📊</span> Financial Reports & P&L Statement
+          </h1>
+          <p className="text-surface-400 text-[11px] sm:text-xs">
+            Araw-araw na Kita, Puhunan ng Benta, In-Order Deliveries, Natirang Paninda, at Malinis na Tubo
           </p>
         </div>
 
-        {/* Month Selector - Clean full width on mobile without button clutter */}
-        <div className="flex items-center justify-between w-full lg:w-auto gap-2">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-bold text-surface-300">📅 Buwan:</span>
-            <span className="text-[10px] text-surface-400 hidden sm:inline">(Month)</span>
-          </div>
+        {/* Month Selector */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[11px] sm:text-xs font-bold text-surface-300 hidden sm:inline">📅 Buwan:</span>
           <input
             type="month"
             value={selectedMonth}
             onChange={e => setSelectedMonth(e.target.value)}
-            className="text-xs sm:text-sm py-1.5 px-3 rounded-xl bg-surface-900 border border-surface-700 text-surface-100 font-semibold cursor-pointer focus:outline-none focus:border-primary-500 shadow-xs w-44 shrink-0"
+            className="text-xs py-1 px-2.5 rounded-lg bg-surface-900 border border-surface-700 text-surface-100 font-semibold cursor-pointer focus:outline-none focus:border-primary-500 shadow-xs w-36 sm:w-40"
           />
         </div>
       </div>
 
       {loading ? (
         <div className="flex-1 min-h-0 flex items-center justify-center py-20">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-9 h-9 border-3 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
-            <p className="text-surface-400 text-xs">Kinakalkula ang ulat sa pananalapi...</p>
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-8 h-8 border-2 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
+            <p className="text-surface-400 text-xs">Kinakalkula ang ulat sa pananalapi at imbentaryo...</p>
           </div>
         </div>
       ) : (
         <>
-          {/* Summary KPI Cards - Mobile Compact View (sm:hidden) */}
-          <div className="sm:hidden flex-shrink-0 flex flex-col gap-1.5">
-            {/* Row 1: Hero Cards */}
-            <div className="grid grid-cols-2 gap-1.5">
-              <div className="p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/70 shadow-sm flex flex-col justify-between">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-surface-400 uppercase tracking-wider">Gross Sales</span>
-                  <span className="text-[9px] text-surface-500 font-medium">Benta</span>
+          {/* Summary KPI Cards - High Information Density (Mobile & Desktop) */}
+          <div className="flex-shrink-0">
+            {/* Mobile View: 2 Hero Cards + 6 Compact Badges */}
+            <div className="sm:hidden flex flex-col gap-1.5">
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="p-2 rounded-lg bg-surface-850 border border-surface-700/70 shadow-xs">
+                  <div className="flex items-center justify-between text-[10px] text-surface-400">
+                    <span className="font-bold uppercase tracking-wider">Gross Sales</span>
+                    <span className="text-[9px] text-surface-500">Benta</span>
+                  </div>
+                  <p className="text-sm font-extrabold text-surface-100 mt-0.5 font-mono">
+                    {formatCurrency(monthSummary.totalSales)}
+                  </p>
                 </div>
-                <p className="text-base font-extrabold text-surface-100 mt-1">
-                  {formatCurrency(monthSummary.totalSales)}
-                </p>
+                <div className="p-2 rounded-lg bg-primary-950/60 border border-primary-500/40 shadow-xs">
+                  <div className="flex items-center justify-between text-[10px] text-primary-300">
+                    <span className="font-bold uppercase tracking-wider">Net Income</span>
+                    <span className="text-[9px] font-bold bg-primary-900/60 px-1 rounded border border-primary-600/30">
+                      {monthSummary.margin}%
+                    </span>
+                  </div>
+                  <p className="text-sm font-black text-primary-400 mt-0.5 font-mono">
+                    {formatCurrency(monthSummary.totalNetIncome)}
+                  </p>
+                </div>
               </div>
 
-              <div className="p-2.5 rounded-xl bg-primary-950/60 border border-primary-500/40 shadow-sm flex flex-col justify-between">
+              {/* 6 Micro Metrics in 2 rows of 3 */}
+              <div className="grid grid-cols-3 gap-1">
+                <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
+                  <span className="text-[8.5px] font-semibold text-indigo-400 block truncate">📦 In-Order Bili</span>
+                  <p className="text-[11px] font-bold text-indigo-300 font-mono mt-0.5 truncate">{formatCurrency(monthSummary.totalInOrder)}</p>
+                </div>
+                <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
+                  <span className="text-[8.5px] font-semibold text-amber-400 block truncate">🏷️ COGS (Benta)</span>
+                  <p className="text-[11px] font-bold text-amber-300 font-mono mt-0.5 truncate">{formatCurrency(monthSummary.totalCogs)}</p>
+                </div>
+                <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
+                  <span className="text-[8.5px] font-semibold text-sky-400 block truncate">🧊 Natira (Asset)</span>
+                  <p className="text-[11px] font-bold text-sky-300 font-mono mt-0.5 truncate">{formatCurrency(monthSummary.totalUnsoldCost)}</p>
+                </div>
+                <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
+                  <span className="text-[8.5px] font-semibold text-emerald-400 block truncate">✨ Gross Profit</span>
+                  <p className="text-[11px] font-bold text-emerald-300 font-mono mt-0.5 truncate">{formatCurrency(monthSummary.totalGrossProfit)}</p>
+                </div>
+                <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
+                  <span className="text-[8.5px] font-semibold text-rose-400 block truncate">💸 OPEX Gastos</span>
+                  <p className="text-[11px] font-bold text-rose-300 font-mono mt-0.5 truncate">{formatCurrency(monthSummary.totalOpex)}</p>
+                </div>
+                <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
+                  <span className="text-[8.5px] font-semibold text-danger-400 block truncate">🔥 Spoilage Lugi</span>
+                  <p className="text-[11px] font-bold text-danger-300 font-mono mt-0.5 truncate">{formatCurrency(monthSummary.totalSpoilage)}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Desktop / Tablet View: 8 Sleek High-Density Metric Cards */}
+            <div className="hidden sm:grid sm:grid-cols-4 lg:grid-cols-8 gap-1.5 lg:gap-2">
+              {/* 1. Gross Sales */}
+              <div className="p-2 rounded-xl bg-surface-850 border border-surface-700/60 shadow-xs flex flex-col justify-between">
+                <span className="text-[10px] font-semibold text-surface-400 uppercase tracking-tight">Sales Revenue</span>
+                <p className="text-sm lg:text-base font-extrabold text-surface-100 font-mono mt-0.5">
+                  {formatCurrency(monthSummary.totalSales)}
+                </p>
+                <span className="text-[9.5px] text-surface-500 truncate">Kabuuang benta</span>
+              </div>
+
+              {/* 2. Total In-Order / Purchases */}
+              <div className="p-2 rounded-xl bg-indigo-950/30 border border-indigo-500/30 shadow-xs flex flex-col justify-between">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-primary-300 uppercase tracking-wider">Net Income</span>
-                  <span className="text-[9px] font-bold text-primary-300 bg-primary-900/60 px-1 py-0.2 rounded border border-primary-600/30">
+                  <span className="text-[10px] font-semibold text-indigo-300 uppercase tracking-tight">In-Order Bili</span>
+                  <span className="text-[9px] text-indigo-400">📦 Deliver</span>
+                </div>
+                <p className="text-sm lg:text-base font-extrabold text-indigo-300 font-mono mt-0.5">
+                  {formatCurrency(monthSummary.totalInOrder)}
+                </p>
+                <span className="text-[9.5px] text-indigo-400/80 truncate">Halaga ng inorder</span>
+              </div>
+
+              {/* 3. COGS */}
+              <div className="p-2 rounded-xl bg-surface-850 border border-surface-700/60 shadow-xs flex flex-col justify-between">
+                <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-tight">COGS (Puhunan)</span>
+                <p className="text-sm lg:text-base font-extrabold text-amber-300 font-mono mt-0.5">
+                  {formatCurrency(monthSummary.totalCogs)}
+                </p>
+                <span className="text-[9.5px] text-surface-500 truncate">Cost ng nabenta</span>
+              </div>
+
+              {/* 4. Unsold Value */}
+              <div className="p-2 rounded-xl bg-sky-950/30 border border-sky-500/30 shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-semibold text-sky-300 uppercase tracking-tight">Natirang Stock</span>
+                  <span className="text-[9px] text-sky-400 font-bold bg-sky-900/40 px-1 rounded">{monthSummary.totalUnsoldQty} pcs</span>
+                </div>
+                <p className="text-sm lg:text-base font-extrabold text-sky-300 font-mono mt-0.5">
+                  {formatCurrency(monthSummary.totalUnsoldCost)}
+                </p>
+                <span className="text-[9.5px] text-sky-400/80 truncate">Puhunan sa freezer</span>
+              </div>
+
+              {/* 5. Gross Profit */}
+              <div className="p-2 rounded-xl bg-surface-850 border border-surface-700/60 shadow-xs flex flex-col justify-between">
+                <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-tight">Gross Profit</span>
+                <p className="text-sm lg:text-base font-extrabold text-emerald-300 font-mono mt-0.5">
+                  {formatCurrency(monthSummary.totalGrossProfit)}
+                </p>
+                <span className="text-[9.5px] text-surface-500 truncate">Benta minus COGS</span>
+              </div>
+
+              {/* 6. OPEX */}
+              <div className="p-2 rounded-xl bg-surface-850 border border-surface-700/60 shadow-xs flex flex-col justify-between">
+                <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-tight">OPEX Gastos</span>
+                <p className="text-sm lg:text-base font-extrabold text-rose-300 font-mono mt-0.5">
+                  {formatCurrency(monthSummary.totalOpex)}
+                </p>
+                <span className="text-[9.5px] text-surface-500 truncate">Uling, bills, gas</span>
+              </div>
+
+              {/* 7. Spoilage */}
+              <div className="p-2 rounded-xl bg-surface-850 border border-surface-700/60 shadow-xs flex flex-col justify-between">
+                <span className="text-[10px] font-semibold text-danger-400 uppercase tracking-tight">Spoilage Lugi</span>
+                <p className="text-sm lg:text-base font-extrabold text-danger-300 font-mono mt-0.5">
+                  {formatCurrency(monthSummary.totalSpoilage)}
+                </p>
+                <span className="text-[9.5px] text-surface-500 truncate">Nasunog / tapon</span>
+              </div>
+
+              {/* 8. Net Income */}
+              <div className="p-2 rounded-xl bg-primary-950/50 border border-primary-500/40 shadow-xs flex flex-col justify-between">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-primary-300 uppercase tracking-tight">Net Income</span>
+                  <span className="text-[9px] font-bold bg-primary-900/60 text-primary-300 px-1 rounded border border-primary-600/30">
                     {monthSummary.margin}%
                   </span>
                 </div>
-                <p className="text-base font-black text-primary-400 mt-1">
+                <p className="text-sm lg:text-base font-black text-primary-400 font-mono mt-0.5">
                   {formatCurrency(monthSummary.totalNetIncome)}
                 </p>
-              </div>
-            </div>
-
-            {/* Row 2: 4 Micro Metric Cards */}
-            <div className="grid grid-cols-4 gap-1.5">
-              <div className="p-1.5 rounded-lg bg-surface-800/80 border border-surface-700/50 text-center">
-                <span className="text-[9px] font-medium text-amber-400/90 uppercase block truncate">COGS</span>
-                <p className="text-xs font-bold text-amber-300 mt-0.5 truncate">{formatCurrency(monthSummary.totalCogs)}</p>
-              </div>
-              <div className="p-1.5 rounded-lg bg-surface-800/80 border border-surface-700/50 text-center">
-                <span className="text-[9px] font-medium text-emerald-400/90 uppercase block truncate">Gross Prof.</span>
-                <p className="text-xs font-bold text-emerald-300 mt-0.5 truncate">{formatCurrency(monthSummary.totalGrossProfit)}</p>
-              </div>
-              <div className="p-1.5 rounded-lg bg-surface-800/80 border border-surface-700/50 text-center">
-                <span className="text-[9px] font-medium text-rose-400/90 uppercase block truncate">OPEX</span>
-                <p className="text-xs font-bold text-rose-300 mt-0.5 truncate">{formatCurrency(monthSummary.totalOpex)}</p>
-              </div>
-              <div className="p-1.5 rounded-lg bg-surface-800/80 border border-surface-700/50 text-center">
-                <span className="text-[9px] font-medium text-danger-400/90 uppercase block truncate">Spoilage</span>
-                <p className="text-xs font-bold text-danger-300 mt-0.5 truncate">{formatCurrency(monthSummary.totalSpoilage)}</p>
+                <span className="text-[9.5px] text-primary-400/90 truncate">Malinis na kita</span>
               </div>
             </div>
           </div>
 
-          {/* Summary KPI Cards - Tablet & Desktop View (hidden sm:grid) */}
-          <div className="hidden sm:grid sm:grid-cols-3 lg:grid-cols-6 gap-2.5 flex-shrink-0">
-            <div className="p-3 rounded-xl bg-surface-800/80 border border-surface-700/60 shadow-sm flex flex-col justify-between">
-              <div>
-                <p className="text-xs text-surface-400 font-medium">Sales Revenue</p>
-                <p className="text-lg font-extrabold text-surface-100 mt-0.5">
-                  {formatCurrency(monthSummary.totalSales)}
-                </p>
-              </div>
-              <p className="text-[11px] text-surface-500 mt-1 truncate">Kabuuang Gross Benta</p>
-            </div>
-
-            <div className="p-3 rounded-xl bg-surface-800/80 border border-surface-700/60 shadow-sm flex flex-col justify-between">
-              <div>
-                <p className="text-xs text-surface-400 font-medium">Cost of Goods (COGS)</p>
-                <p className="text-lg font-extrabold text-amber-400 mt-0.5">
-                  {formatCurrency(monthSummary.totalCogs)}
-                </p>
-              </div>
-              <p className="text-[11px] text-surface-500 mt-1 truncate">Puhunan ng mga naibenta</p>
-            </div>
-
-            <div className="p-3 rounded-xl bg-surface-800/80 border border-surface-700/60 shadow-sm flex flex-col justify-between">
-              <div>
-                <p className="text-xs text-surface-400 font-medium">Gross Profit</p>
-                <p className="text-lg font-extrabold text-emerald-400 mt-0.5">
-                  {formatCurrency(monthSummary.totalGrossProfit)}
-                </p>
-              </div>
-              <p className="text-[11px] text-surface-500 mt-1 truncate">Sales minus COGS</p>
-            </div>
-
-            <div className="p-3 rounded-xl bg-surface-800/80 border border-surface-700/60 shadow-sm flex flex-col justify-between">
-              <div>
-                <p className="text-xs text-surface-400 font-medium">Operating Expenses</p>
-                <p className="text-lg font-extrabold text-rose-400 mt-0.5">
-                  {formatCurrency(monthSummary.totalOpex)}
-                </p>
-              </div>
-              <p className="text-[11px] text-surface-500 mt-1 truncate">Uling, mantika, bills</p>
-            </div>
-
-            <div className="p-3 rounded-xl bg-surface-800/80 border border-surface-700/60 shadow-sm flex flex-col justify-between">
-              <div>
-                <p className="text-xs text-surface-400 font-medium">Spoilage Losses</p>
-                <p className="text-lg font-extrabold text-danger-400 mt-0.5">
-                  {formatCurrency(monthSummary.totalSpoilage)}
-                </p>
-              </div>
-              <p className="text-[11px] text-surface-500 mt-1 truncate">Nasunog / nasayang</p>
-            </div>
-
-            <div className="p-3 rounded-xl bg-primary-950/40 border border-primary-500/30 shadow-sm flex flex-col justify-between">
-              <div>
-                <p className="text-xs text-primary-300 font-medium">NET INCOME</p>
-                <p className="text-lg font-black text-primary-400 mt-0.5">
-                  {formatCurrency(monthSummary.totalNetIncome)}
-                </p>
-              </div>
-              <p className="text-[11px] text-primary-400/90 mt-1 truncate">{monthSummary.margin}% net profit margin</p>
-            </div>
-          </div>
-
-          {/* Action Toolbar Below Summary Cards */}
-          <div className="flex items-center justify-between gap-2 flex-shrink-0">
-            {/* Mobile/Tablet Section Tab Switcher (lg:hidden) */}
-            <div className="lg:hidden flex items-center bg-surface-900/80 p-0.5 rounded-xl border border-surface-700/60 shrink-0">
+          {/* Action Toolbar & Section Navigation */}
+          <div className="flex items-center justify-between gap-1.5 flex-shrink-0">
+            {/* Tab switchers: Daily P&L Table vs Expenses Breakdown */}
+            <div className="flex items-center bg-surface-900/80 p-0.5 rounded-lg border border-surface-700/60 shrink-0">
               <button
-                onClick={() => setMobileTab('daily')}
-                className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer text-center whitespace-nowrap ${
-                  mobileTab === 'daily'
+                onClick={() => setActiveTab('daily')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'daily'
                     ? 'bg-primary-600 text-white shadow-xs'
                     : 'text-surface-400 hover:text-surface-200'
                 }`}
               >
-                📅 Daily (1-31)
+                <span>📅</span> <span>Araw-Araw (P&L)</span>
               </button>
               <button
-                onClick={() => setMobileTab('expenses')}
-                className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer text-center whitespace-nowrap ${
-                  mobileTab === 'expenses'
+                onClick={() => setActiveTab('expenses')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'expenses'
                     ? 'bg-primary-600 text-white shadow-xs'
                     : 'text-surface-400 hover:text-surface-200'
                 }`}
               >
-                💸 Gastos ({expensesByCategory.length})
+                <span>💸</span> <span>Gastos Ayon sa Kategorya ({expensesByCategory.length})</span>
               </button>
             </div>
 
-            {/* Desktop Section Header (hidden on mobile, visible on lg) */}
-            <div className="hidden lg:flex items-center gap-2">
-              <span className="text-sm font-bold text-surface-200">
-                Detailed Statement & Analysis
-              </span>
-              <span className="text-xs text-surface-400">
-                ({selectedMonth})
-              </span>
-            </div>
-
-            {/* Export & Print Buttons */}
-            <div className="flex items-center gap-1.5 sm:gap-2 flex-nowrap shrink-0 ml-auto">
-              <button
-                onClick={handleExportCSV}
-                className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-200 border border-surface-700/80 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 shadow-xs"
-                title="Export monthly CSV"
-              >
-                <span>📥</span> <span className="hidden xs:inline">Export</span> <span>CSV</span>
-              </button>
-              <button
-                onClick={handlePrint}
-                className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs font-semibold shadow-xs shadow-primary-600/20 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                title="Print report"
-              >
-                <span>🖨️</span> <span>Print</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Main Layout: Daily Statement & Category Breakdown */}
-          <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-4 gap-3 sm:gap-4">
-            {/* Daily P&L Statement (Always visible on desktop; on mobile visible if mobileTab === 'daily') */}
-            <div className={`lg:col-span-3 bg-surface-800/50 rounded-xl border border-surface-700/50 flex flex-col overflow-hidden shadow-sm ${mobileTab === 'daily' ? 'flex' : 'hidden lg:flex'}`}>
-              {/* Table Header Bar with View Switcher */}
-              <div className="px-3 py-2 sm:px-4 sm:py-2.5 bg-surface-900/70 border-b border-surface-700/50 flex items-center justify-between gap-2 flex-nowrap shrink-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  <h3 className="text-xs sm:text-sm font-bold text-surface-100 flex items-center gap-1.5 truncate">
-                    <span>📅</span> <span>Araw-Araw na Kita at Gastos</span>
-                  </h3>
-                  <span className="text-[10px] sm:text-xs text-surface-400 hidden sm:inline whitespace-nowrap">
-                    Month of {selectedMonth}
-                  </span>
-                </div>
-
-                {/* View switcher: Cards vs Table */}
-                <div className="flex items-center gap-1 bg-surface-800/80 p-0.5 rounded-lg border border-surface-700/60 shrink-0">
+            {/* Right Tools: View Mode (Cards/Table), CSV, Print */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {activeTab === 'daily' && (
+                <div className="flex items-center bg-surface-900/80 p-0.5 rounded-lg border border-surface-700/60 shrink-0">
+                  <button
+                    onClick={() => setViewMode('table')}
+                    className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 ${
+                      viewMode === 'table'
+                        ? 'bg-surface-700 text-surface-100 font-semibold shadow-xs'
+                        : 'text-surface-400 hover:text-surface-200'
+                    }`}
+                    title="Table View (Full Width)"
+                  >
+                    <span>📋</span> <span className="hidden sm:inline">Table</span>
+                  </button>
                   <button
                     onClick={() => setViewMode('cards')}
-                    className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                    className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 ${
                       viewMode === 'cards'
-                        ? 'bg-primary-600 text-white shadow-xs'
+                        ? 'bg-surface-700 text-surface-100 font-semibold shadow-xs'
                         : 'text-surface-400 hover:text-surface-200'
                     }`}
                     title="Cards View"
                   >
-                    <span>📱</span> <span className="hidden xs:inline">Cards</span>
-                  </button>
-                  <button
-                    onClick={() => setViewMode('table')}
-                    className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
-                      viewMode === 'table'
-                        ? 'bg-primary-600 text-white shadow-xs'
-                        : 'text-surface-400 hover:text-surface-200'
-                    }`}
-                    title="Table View"
-                  >
-                    <span>📋</span> <span className="hidden xs:inline">Table</span>
+                    <span>📱</span> <span className="hidden sm:inline">Cards</span>
                   </button>
                 </div>
-              </div>
+              )}
 
-              {/* Table or Cards Content */}
+              <button
+                onClick={handleExportCSV}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface-800 hover:bg-surface-700 text-surface-200 border border-surface-700/80 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shadow-xs"
+                title="Export complete monthly CSV"
+              >
+                <span>📥</span> <span className="hidden xs:inline">CSV</span>
+              </button>
+              <button
+                onClick={handlePrint}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-semibold shadow-xs shadow-primary-600/20 transition-colors cursor-pointer whitespace-nowrap"
+                title="Print report"
+              >
+                <span>🖨️</span> <span className="hidden xs:inline">Print</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Main Content Area: 100% Full-Width (Zero Horizontal Overflow, Maximum Space Usage) */}
+          {activeTab === 'daily' ? (
+            <div className="flex-1 min-h-0 bg-surface-850 rounded-xl border border-surface-700/60 flex flex-col overflow-hidden shadow-xs">
+              {/* Daily Content View: Cards or Table */}
               <div className="flex-1 min-h-0 overflow-y-auto">
                 {viewMode === 'cards' ? (
-                  /* Cards View - 100% Mobile Friendly */
-                  <div className="p-2 sm:p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  /* Cards View - Zero Horizontal Scroll, 100% Space Efficient on Mobile/Tablet/Desktop */
+                  <div className="p-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
                     {paginatedDays.length === 0 ? (
                       <div className="col-span-full py-8 text-center text-xs text-surface-400">
                         Walang datos sa piniling filter
@@ -443,28 +505,29 @@ export function ReportsPage() {
                       paginatedDays.map(day => (
                         <div
                           key={day.dayNumber}
-                          className={`p-2.5 rounded-xl border transition-colors ${
+                          className={`p-2.5 rounded-xl border transition-all ${
                             day.hasActivity
-                              ? 'bg-surface-850 border-surface-700/70 shadow-xs'
-                              : 'bg-surface-900/40 border-surface-800/50 opacity-60'
+                              ? 'bg-surface-900/90 border-surface-700/70 shadow-xs'
+                              : 'bg-surface-900/30 border-surface-800/40 opacity-55'
                           }`}
                         >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span className="text-xs font-bold text-surface-200 whitespace-nowrap">
+                          {/* Card Header: Day + Net Profit */}
+                          <div className="flex items-center justify-between pb-1.5 border-b border-surface-800/80">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold text-surface-200">
                                 Day {day.dayNumber}
                               </span>
-                              <span className="text-[10px] text-surface-500 whitespace-nowrap">
+                              <span className="text-[10px] text-surface-400 font-mono">
                                 ({day.date.slice(5)})
                               </span>
                               {day.hasActivity && (
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
                               )}
                             </div>
-                            <div className="text-right whitespace-nowrap shrink-0">
-                              <span className="text-[10px] text-surface-400 uppercase mr-1">Net:</span>
+                            <div className="text-right">
+                              <span className="text-[9.5px] text-surface-400 uppercase mr-1">Net:</span>
                               <span
-                                className={`text-xs font-bold ${
+                                className={`text-xs font-bold font-mono ${
                                   day.hasActivity
                                     ? day.netIncome >= 0
                                       ? 'text-primary-400 font-black'
@@ -478,74 +541,106 @@ export function ReportsPage() {
                           </div>
 
                           {day.hasActivity ? (
-                            <>
-                              <div className="grid grid-cols-4 gap-1 pt-2 mt-1.5 border-t border-surface-800/90 text-[10px]">
-                                <div>
-                                  <span className="text-surface-500 block truncate">Sales</span>
-                                  <span className="font-semibold text-surface-100 block truncate">{formatCurrency(day.sales)}</span>
+                            <div className="pt-1.5 space-y-1.5 text-[10.5px]">
+                              {/* Row 1: Sales & In-Order */}
+                              <div className="grid grid-cols-2 gap-1.5">
+                                <div className="p-1 rounded bg-surface-800/50">
+                                  <span className="text-[9px] text-surface-400 block truncate">Sales Benta</span>
+                                  <span className="font-bold text-surface-100 font-mono block truncate">{formatCurrency(day.sales)}</span>
                                 </div>
-                                <div>
-                                  <span className="text-amber-400/90 block truncate">COGS</span>
-                                  <span className="font-semibold text-amber-300 block truncate">{formatCurrency(day.cogs)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-rose-400/90 block truncate">OPEX</span>
-                                  <span className="font-semibold text-rose-300 block truncate">{formatCurrency(day.opex)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-emerald-400/90 block truncate">GP</span>
-                                  <span className="font-semibold text-emerald-300 block truncate">{formatCurrency(day.grossProfit)}</span>
+                                <div className="p-1 rounded bg-indigo-950/20 border border-indigo-500/20">
+                                  <span className="text-[9px] text-indigo-300 block truncate">📦 In-Order (Bili)</span>
+                                  <span className="font-bold text-indigo-300 font-mono block truncate">{formatCurrency(day.inOrderCost)}</span>
                                 </div>
                               </div>
+
+                              {/* Row 2: COGS & Unsold Value */}
+                              <div className="grid grid-cols-2 gap-1.5">
+                                <div className="p-1 rounded bg-surface-800/50">
+                                  <span className="text-[9px] text-amber-400/90 block truncate">COGS (Puhunan)</span>
+                                  <span className="font-bold text-amber-300 font-mono block truncate">{formatCurrency(day.cogs)}</span>
+                                </div>
+                                <div className="p-1 rounded bg-sky-950/20 border border-sky-500/20">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[9px] text-sky-300 block truncate">🧊 Natira (Asset)</span>
+                                    {day.unsoldQty > 0 && <span className="text-[8.5px] text-sky-400 font-semibold">{day.unsoldQty} pcs</span>}
+                                  </div>
+                                  <span className="font-bold text-sky-300 font-mono block truncate">{formatCurrency(day.unsoldCostValue)}</span>
+                                </div>
+                              </div>
+
+                              {/* Row 3: GP, OPEX, Spoilage */}
+                              <div className="grid grid-cols-3 gap-1 text-[10px]">
+                                <div>
+                                  <span className="text-emerald-400/90 block text-[9px] truncate">Gross Prof.</span>
+                                  <span className="font-semibold text-emerald-300 font-mono block truncate">{formatCurrency(day.grossProfit)}</span>
+                                </div>
+                                <div>
+                                  <span className="text-rose-400/90 block text-[9px] truncate">OPEX Gastos</span>
+                                  <span className="font-semibold text-rose-300 font-mono block truncate">{formatCurrency(day.opex)}</span>
+                                </div>
+                                <div>
+                                  <span className="text-danger-400/90 block text-[9px] truncate">Spoilage</span>
+                                  <span className="font-semibold text-danger-300 font-mono block truncate">{formatCurrency(day.spoilageLoss)}</span>
+                                </div>
+                              </div>
+
+                              {/* Cash On-Hand reconciliation footer */}
                               {day.cashOnHand > 0 && (
-                                <div className="mt-1.5 pt-1.5 border-t border-surface-800/60 flex items-center justify-between text-[10px]">
-                                  <span className="text-surface-400 flex items-center gap-1"><span>💵</span> Cash On-Hand:</span>
-                                  <span className="font-bold text-sky-400">{formatCurrency(day.cashOnHand)}</span>
+                                <div className="pt-1 border-t border-surface-800/70 flex items-center justify-between text-[10px]">
+                                  <span className="text-surface-400 flex items-center gap-1"><span>💵</span> Kaha On-Hand:</span>
+                                  <span className="font-bold text-sky-400 font-mono">{formatCurrency(day.cashOnHand)}</span>
                                 </div>
                               )}
-                            </>
+                            </div>
                           ) : (
-                            <p className="text-[10px] text-surface-500 mt-1 italic">Walang transaksyon o gastos</p>
+                            <p className="text-[10px] text-surface-500 mt-2 italic text-center">Walang transaksyon o aktibidad</p>
                           )}
                         </div>
                       ))
                     )}
                   </div>
                 ) : (
-                  /* Responsive Table View - Zero Horizontal Overflow */
-                  <table className="w-full text-left border-collapse">
-                    <thead className="sticky top-0 bg-surface-900 border-b border-surface-700/60 z-10 shadow-xs">
+                  /* High-Density Full-Width Table - ZERO Horizontal Scrollbar */
+                  <table className="w-full text-left table-fixed border-collapse">
+                    <thead className="sticky top-0 bg-surface-900 border-b border-surface-700/70 z-10 shadow-xs">
                       <tr>
-                        <th className="px-2.5 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase whitespace-nowrap">
-                          Day
+                        <th className="w-[8%] px-2 py-1.5 text-[10.5px] font-bold text-surface-400 uppercase tracking-tight">
+                          Araw
                         </th>
-                        <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-right whitespace-nowrap">
-                          Sales
+                        <th className="w-[10.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-surface-300 uppercase tracking-tight text-right">
+                          Sales (Benta)
                         </th>
-                        <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-right whitespace-nowrap hidden sm:table-cell">
-                          COGS
+                        <th className="w-[10.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-indigo-300 uppercase tracking-tight text-right">
+                          In-Order (Bili)
                         </th>
-                        <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-right whitespace-nowrap hidden md:table-cell">
+                        <th className="w-[10.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-amber-400 uppercase tracking-tight text-right">
+                          COGS (Puhunan)
+                        </th>
+                        <th className="w-[11.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-sky-300 uppercase tracking-tight text-right">
+                          Natira (Unsold)
+                        </th>
+                        <th className="w-[10.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-emerald-400 uppercase tracking-tight text-right">
                           Gross Profit
                         </th>
-                        <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-right whitespace-nowrap hidden sm:table-cell">
-                          OPEX
+                        <th className="w-[9.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-rose-400 uppercase tracking-tight text-right">
+                          OPEX Gastos
                         </th>
-                        <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-right whitespace-nowrap hidden xl:table-cell">
+                        <th className="w-[8.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-danger-400 uppercase tracking-tight text-right hidden sm:table-cell">
                           Spoilage
                         </th>
-                        <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-sky-400 uppercase text-right whitespace-nowrap hidden lg:table-cell">
-                          Cash On-Hand
+                        <th className="w-[9.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-sky-400 uppercase tracking-tight text-right hidden md:table-cell">
+                          Kaha On-Hand
                         </th>
-                        <th className="px-2.5 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-right whitespace-nowrap">
+                        <th className="w-[11%] px-2 py-1.5 text-[10.5px] font-bold text-surface-200 uppercase tracking-tight text-right">
                           Net Income
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-surface-700/30">
+                    <tbody className="divide-y divide-surface-700/30 font-mono text-[11px] sm:text-xs">
                       {paginatedDays.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="text-center py-8 text-xs text-surface-400">
+                          <td colSpan={10} className="text-center py-8 text-xs text-surface-400">
                             Walang datos sa piniling filter
                           </td>
                         </tr>
@@ -554,34 +649,70 @@ export function ReportsPage() {
                           <tr
                             key={day.dayNumber}
                             className={`hover:bg-surface-700/20 transition-colors ${
-                              day.hasActivity ? 'bg-surface-800/15' : 'opacity-55'
+                              day.hasActivity ? 'bg-surface-850/80' : 'opacity-40'
                             }`}
                           >
-                            <td className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-semibold text-surface-300 whitespace-nowrap">
-                              Day {day.dayNumber}{' '}
-                              <span className="text-[10px] text-surface-500 font-normal">
+                            {/* Day Column */}
+                            <td className="px-2 py-1.5 font-sans font-semibold text-surface-200 whitespace-nowrap truncate">
+                              D{day.dayNumber}{' '}
+                              <span className="text-[10px] text-surface-400 font-normal">
                                 ({day.date.slice(5)})
                               </span>
                             </td>
-                            <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-right text-xs text-surface-100 font-medium whitespace-nowrap">
+
+                            {/* Sales */}
+                            <td className="px-1.5 py-1.5 text-right text-surface-100 font-semibold truncate">
                               {day.sales > 0 ? formatCurrency(day.sales) : '—'}
                             </td>
-                            <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-right text-xs text-amber-400 whitespace-nowrap hidden sm:table-cell">
+
+                            {/* In-Order Cost */}
+                            <td className="px-1.5 py-1.5 text-right text-indigo-300 font-medium truncate">
+                              {day.inOrderCost > 0 ? formatCurrency(day.inOrderCost) : '—'}
+                            </td>
+
+                            {/* COGS */}
+                            <td className="px-1.5 py-1.5 text-right text-amber-300/90 truncate">
                               {day.cogs > 0 ? formatCurrency(day.cogs) : '—'}
                             </td>
-                            <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-right text-xs text-emerald-400 font-semibold whitespace-nowrap hidden md:table-cell">
+
+                            {/* Unsold Inventory Value */}
+                            <td className="px-1.5 py-1.5 text-right text-sky-300 font-medium truncate">
+                              {day.unsoldCostValue > 0 ? (
+                                <span title={`${day.unsoldQty} pcs natira (Retail: ${formatCurrency(day.unsoldRetailValue)})`}>
+                                  {formatCurrency(day.unsoldCostValue)}
+                                  {day.unsoldQty > 0 && (
+                                    <span className="text-[9px] font-sans text-sky-400/80 ml-1">
+                                      ({day.unsoldQty})
+                                    </span>
+                                  )}
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+
+                            {/* Gross Profit */}
+                            <td className="px-1.5 py-1.5 text-right text-emerald-300 font-medium truncate">
                               {day.grossProfit > 0 ? formatCurrency(day.grossProfit) : '—'}
                             </td>
-                            <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-right text-xs text-rose-400 whitespace-nowrap hidden sm:table-cell">
+
+                            {/* OPEX */}
+                            <td className="px-1.5 py-1.5 text-right text-rose-300/90 truncate">
                               {day.opex > 0 ? formatCurrency(day.opex) : '—'}
                             </td>
-                            <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-right text-xs text-danger-400 whitespace-nowrap hidden xl:table-cell">
+
+                            {/* Spoilage Loss */}
+                            <td className="px-1.5 py-1.5 text-right text-danger-300/90 truncate hidden sm:table-cell">
                               {day.spoilageLoss > 0 ? formatCurrency(day.spoilageLoss) : '—'}
                             </td>
-                            <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-right text-xs font-semibold text-sky-400 whitespace-nowrap hidden lg:table-cell">
+
+                            {/* Cash On Hand */}
+                            <td className="px-1.5 py-1.5 text-right text-sky-400/90 truncate hidden md:table-cell">
                               {day.cashOnHand > 0 ? formatCurrency(day.cashOnHand) : '—'}
                             </td>
-                            <td className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-right text-xs font-bold whitespace-nowrap">
+
+                            {/* Net Income */}
+                            <td className="px-2 py-1.5 text-right font-bold truncate">
                               {day.hasActivity ? (
                                 <span
                                   className={
@@ -603,10 +734,10 @@ export function ReportsPage() {
               </div>
 
               {/* Single-Line Non-Wrapping Pagination Footer */}
-              <div className="flex items-center justify-between px-2.5 sm:px-3 py-1.5 sm:py-2 bg-surface-900/90 border-t border-surface-700/60 text-xs text-surface-300 flex-nowrap shrink-0">
+              <div className="flex items-center justify-between px-2.5 py-1.5 bg-surface-900 border-t border-surface-700/70 text-xs text-surface-300 flex-nowrap shrink-0">
                 {/* Left: Range and Active Filter Toggle */}
                 <div className="flex items-center gap-1.5 whitespace-nowrap shrink-0">
-                  <span className="text-[10px] sm:text-xs text-surface-400 font-medium">
+                  <span className="text-[10.5px] text-surface-400 font-medium">
                     {displayedDays.length === 0
                       ? '0 of 0'
                       : `${(currentPage - 1) * pageSize + 1}-${Math.min(
@@ -621,15 +752,15 @@ export function ReportsPage() {
                     }}
                     className={`px-1.5 py-0.5 rounded text-[10px] font-medium border transition-colors cursor-pointer whitespace-nowrap ${
                       filterActiveOnly
-                        ? 'bg-primary-950/70 border-primary-500/50 text-primary-300'
+                        ? 'bg-primary-950/70 border-primary-500/50 text-primary-300 font-bold'
                         : 'bg-surface-800/80 border-surface-700/60 text-surface-400 hover:text-surface-200'
                     }`}
                   >
-                    {filterActiveOnly ? 'Active Only' : 'All Days'}
+                    {filterActiveOnly ? '✓ Active Days Only' : 'Lahat ng Araw (1-31)'}
                   </button>
                 </div>
 
-                {/* Right: Page Size & Pagination Controls */}
+                {/* Right: Page Size & Navigation */}
                 <div className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap shrink-0">
                   <select
                     value={pageSize}
@@ -637,71 +768,77 @@ export function ReportsPage() {
                       setPageSize(Number(e.target.value));
                       setCurrentPage(1);
                     }}
-                    className="bg-surface-800 border border-surface-700/60 rounded px-1 py-0.5 text-[10px] sm:text-[11px] text-surface-300 cursor-pointer"
+                    className="bg-surface-800 border border-surface-700/60 rounded px-1.5 py-0.5 text-[10.5px] text-surface-300 cursor-pointer"
                   >
-                    <option value={7}>7/page</option>
-                    <option value={10}>10/page</option>
-                    <option value={15}>15/page</option>
-                    <option value={31}>All</option>
+                    <option value={7}>7 araw</option>
+                    <option value={10}>10 araw</option>
+                    <option value={15}>15 araw</option>
+                    <option value={31}>Lahat (Buong Buwan)</option>
                   </select>
                   <button
                     disabled={currentPage <= 1}
                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    className="px-1.5 sm:px-2 py-0.5 rounded bg-surface-800 hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] sm:text-[11px] border border-surface-700/60 text-surface-200 cursor-pointer whitespace-nowrap"
+                    className="px-2 py-0.5 rounded bg-surface-800 hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed text-[10.5px] border border-surface-700/60 text-surface-200 cursor-pointer"
                   >
                     ← Prev
                   </button>
-                  <span className="text-[10px] sm:text-[11px] text-surface-400 font-medium px-0.5">
+                  <span className="text-[10.5px] text-surface-400 font-medium px-0.5">
                     {currentPage}/{totalPages}
                   </span>
                   <button
                     disabled={currentPage >= totalPages}
                     onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                    className="px-1.5 sm:px-2 py-0.5 rounded bg-surface-800 hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] sm:text-[11px] border border-surface-700/60 text-surface-200 cursor-pointer whitespace-nowrap"
+                    className="px-2 py-0.5 rounded bg-surface-800 hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed text-[10.5px] border border-surface-700/60 text-surface-200 cursor-pointer"
                   >
                     Next →
                   </button>
                 </div>
               </div>
             </div>
-
-            {/* Expense Breakdown By Category (Always visible on desktop; on mobile visible if mobileTab === 'expenses') */}
-            <div className={`bg-surface-800/50 rounded-xl border border-surface-700/50 flex flex-col overflow-hidden shadow-sm ${mobileTab === 'expenses' ? 'flex' : 'hidden lg:flex'}`}>
-              <div className="px-3 py-2 sm:px-4 sm:py-2.5 bg-surface-900/70 border-b border-surface-700/50">
-                <h3 className="text-xs sm:text-sm font-bold text-surface-100 flex items-center gap-1.5">
-                  <span>💸</span> Gastos Ayon sa Kategorya
-                </h3>
-                <p className="text-[11px] text-surface-400 mt-0.5">Breakdown ng lahat ng supplies at bills</p>
+          ) : (
+            /* Gastos Ayon sa Kategorya Breakdown (100% Full-Width) */
+            <div className="flex-1 min-h-0 bg-surface-850 rounded-xl border border-surface-700/60 flex flex-col overflow-hidden shadow-xs p-3 sm:p-4">
+              <div className="flex items-center justify-between pb-2 border-b border-surface-700/60">
+                <div>
+                  <h3 className="text-sm font-bold text-surface-100 flex items-center gap-1.5">
+                    <span>💸</span> Gastos Ayon sa Kategorya (OPEX Breakdown)
+                  </h3>
+                  <p className="text-xs text-surface-400 mt-0.5">
+                    Kabuuang nagastos para sa buwan ng {selectedMonth}: <span className="font-bold text-rose-300 font-mono">{formatCurrency(monthSummary.totalOpex)}</span>
+                  </p>
+                </div>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5">
+              <div className="flex-1 min-h-0 overflow-y-auto pt-3">
                 {expensesByCategory.length === 0 ? (
-                  <div className="text-center py-8 text-surface-400 text-xs">
-                    Walang naitalang gastos ngayong buwan
+                  <div className="text-center py-12 text-surface-400 text-xs">
+                    Walang naitalang operating expenses ngayong buwan
                   </div>
                 ) : (
-                  expensesByCategory.map(item => {
-                    const pct = monthSummary.totalOpex > 0 ? ((item.amount / monthSummary.totalOpex) * 100).toFixed(1) : 0;
-                    return (
-                      <div key={item.category} className="p-2.5 rounded-xl bg-surface-900/50 border border-surface-700/40">
-                        <div className="flex items-center justify-between text-xs font-medium">
-                          <span className="text-surface-200 truncate pr-2">{item.category}</span>
-                          <span className="font-bold text-surface-100 whitespace-nowrap">{formatCurrency(item.amount)}</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                    {expensesByCategory.map(item => {
+                      const pct = monthSummary.totalOpex > 0 ? ((item.amount / monthSummary.totalOpex) * 100).toFixed(1) : '0';
+                      return (
+                        <div key={item.category} className="p-3 rounded-xl bg-surface-900/70 border border-surface-700/50 flex flex-col justify-between">
+                          <div className="flex items-center justify-between text-xs font-medium">
+                            <span className="text-surface-200 font-semibold truncate pr-2">{item.category}</span>
+                            <span className="font-bold text-surface-100 font-mono whitespace-nowrap">{formatCurrency(item.amount)}</span>
+                          </div>
+                          <div className="w-full h-1.5 rounded-full bg-surface-700/60 mt-2 overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-primary-500 transition-all duration-300"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] text-surface-400 mt-1.5 block text-right font-mono">{pct}% of OPEX</span>
                         </div>
-                        <div className="w-full h-1.5 rounded-full bg-surface-700/60 mt-1.5 overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-primary-500"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                        <span className="text-[10px] text-surface-400 mt-1 block text-right">{pct}% of OPEX</span>
-                      </div>
-                    );
-                  })
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             </div>
-          </div>
+          )}
         </>
       )}
     </div>
