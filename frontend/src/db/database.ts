@@ -14,6 +14,7 @@ import type { DailyClosing } from '../types/closing';
 import type { ReorderSheet } from '../types/reorder';
 import type { Supplier } from '../types/supplier';
 import type { OrderItem } from '../types/orderItem';
+import type { Customer, CustomerLedgerEntry } from '../types/customer';
 
 export interface PendingMutation {
   id: string; // uuid
@@ -29,7 +30,7 @@ export interface PendingMutation {
 
 // Database name and version
 const DB_NAME = 'pos_offline_db';
-const DB_VERSION = 11;
+const DB_VERSION = 13;
 
 // Store names
 export const STORES = {
@@ -44,6 +45,8 @@ export const STORES = {
   REORDERS: 'reorders',
   SUPPLIERS: 'suppliers',
   ORDER_ITEMS: 'orderItems',
+  CUSTOMERS: 'customers',
+  CUSTOMER_LEDGER: 'customerLedger',
 } as const;
 
 export interface SyncMeta {
@@ -132,6 +135,22 @@ export type PosDB = IDBPDatabase<{
       'by-active': number;
     };
   };
+  customers: {
+    key: number;
+    value: Customer;
+    indexes: {
+      'by-name': string;
+      'by-balance': number;
+    };
+  };
+  customerLedger: {
+    key: string;
+    value: CustomerLedgerEntry;
+    indexes: {
+      'by-customer-id': number;
+      'by-created': string;
+    };
+  };
 }>;
 
 let dbInstance: PosDB | null = null;
@@ -152,7 +171,7 @@ export async function getDB(): Promise<PosDB> {
       if (!db.objectStoreNames.contains('products')) {
         const productStore = db.createObjectStore('products', { keyPath: 'id' });
         productStore.createIndex('by-category', 'category_id');
-        productStore.createIndex('by-sku', 'sku', { unique: true });
+        productStore.createIndex('by-sku', 'sku', { unique: false });
         productStore.createIndex('by-updated', 'updated_at');
       }
 
@@ -167,7 +186,7 @@ export async function getDB(): Promise<PosDB> {
         const salesStore = db.createObjectStore('pendingSales', { keyPath: 'uuid' });
         salesStore.createIndex('by-status', 'sync_status');
         salesStore.createIndex('by-sold-at', 'sold_at');
-        salesStore.createIndex('by-receipt', 'receipt_number', { unique: true });
+        salesStore.createIndex('by-receipt', 'receipt_number', { unique: false });
       }
 
       // Payment methods store
@@ -219,6 +238,20 @@ export async function getDB(): Promise<PosDB> {
         orderItemStore.createIndex('by-supplier', 'supplier_id');
         orderItemStore.createIndex('by-name', 'name');
         orderItemStore.createIndex('by-active', 'is_active');
+      }
+
+      // Customers store (Suki / debtors)
+      if (!db.objectStoreNames.contains('customers')) {
+        const customerStore = (db as any).createObjectStore('customers', { keyPath: 'id' });
+        customerStore.createIndex('by-name', 'name');
+        customerStore.createIndex('by-balance', 'current_balance');
+      }
+
+      // Customer ledger store (transactions & debt payments)
+      if (!db.objectStoreNames.contains('customerLedger')) {
+        const ledgerStore = (db as any).createObjectStore('customerLedger', { keyPath: 'uuid' });
+        ledgerStore.createIndex('by-customer-id', 'customer_id');
+        ledgerStore.createIndex('by-created', 'created_at');
       }
 
       // ── v7 migration: fix Oct 21 closing if it has wrong Pork BBQ prepared_qty ──
@@ -359,6 +392,29 @@ export async function getDB(): Promise<PosDB> {
       // ── v11 migration: Compatibility with existing version 11 browser stores ──
       if (oldVersion < 11) {
         console.log('[DB v11] Database opened with version 11.');
+      }
+
+      // ── v12 migration: Remove unique constraint on by-sku and by-receipt to fix ConstraintError ──
+      if (oldVersion < 12) {
+        try {
+          if (db.objectStoreNames.contains('products')) {
+            const productStore = tx.objectStore('products');
+            if (productStore.indexNames.contains('by-sku')) {
+              productStore.deleteIndex('by-sku');
+            }
+            productStore.createIndex('by-sku', 'sku', { unique: false });
+          }
+          if (db.objectStoreNames.contains('pendingSales')) {
+            const salesStore = tx.objectStore('pendingSales');
+            if (salesStore.indexNames.contains('by-receipt')) {
+              salesStore.deleteIndex('by-receipt');
+            }
+            salesStore.createIndex('by-receipt', 'receipt_number', { unique: false });
+          }
+          console.log('[DB v12] Removed strict unique constraints on by-sku and by-receipt to prevent sync/seed crashes.');
+        } catch (e) {
+          console.warn('[DB v12] Migration error:', e);
+        }
       }
     },
     blocked() {

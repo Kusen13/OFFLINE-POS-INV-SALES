@@ -1,14 +1,21 @@
 /**
- * Categories Page - Category management with CRUD
+ * Categories Page - Category management with CRUD and Dynamic Business Line Scoping
+ * 
+ * Strict Department Isolation:
+ * - NO "Lahat" button: Every view is strictly scoped to one Business Line at a time
+ * - Custom Business Lines support (e.g. Kapehan, Bakery) via [ + Bagong Negosyo ]
+ * - Auto-preselects active Business Department when creating a new category
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { fetchCategories, createCategory, updateCategory, deleteCategory } from '../../api/endpoints';
 import { replaceAllCategories, getAllCategories, saveLocalCategory, deleteLocalCategory } from '../../db/productRepository';
 import { addPendingMutation, removeMutationByTempId } from '../../db/mutationRepository';
 import { useSyncStore } from '../../features/sync/syncStore';
-import type { Category } from '../../types/product';
+import type { Category, BusinessType, BusinessDepartment } from '../../types/product';
+import { getAllBusinessDepartments } from '../../utils/businessStorage';
+import { BusinessDepartmentModal } from '../../components/categories/BusinessDepartmentModal';
 
 export function CategoriesPage() {
   const [categories, setCategories] = useState<(Category & { is_pending?: boolean })[]>([]);
@@ -19,7 +26,23 @@ export function CategoriesPage() {
   const [editing, setEditing] = useState<Category | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<Category | null>(null);
 
-  async function loadCategories() {
+  // Dynamic Business Departments
+  const [departments, setDepartments] = useState<BusinessDepartment[]>(() => getAllBusinessDepartments());
+  const [selectedDept, setSelectedDept] = useState<BusinessType>('barbeque');
+  const [showDeptModal, setShowDeptModal] = useState(false);
+  const [deptToEdit, setDeptToEdit] = useState<BusinessDepartment | null>(null);
+
+  // Listen for dynamic business line updates (from modal or other tabs)
+  useEffect(() => {
+    const handleDeptUpdated = () => {
+      const updated = getAllBusinessDepartments();
+      setDepartments(updated);
+    };
+    window.addEventListener('pos_departments_updated', handleDeptUpdated);
+    return () => window.removeEventListener('pos_departments_updated', handleDeptUpdated);
+  }, []);
+
+  const loadCategories = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -39,11 +62,13 @@ export function CategoriesPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  useEffect(() => { loadCategories(); }, []);
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
 
-  async function handleSave(data: { name: string; description: string; sort_order: number }) {
+  async function handleSave(data: { name: string; business_type: BusinessType; description: string; sort_order: number }) {
     try {
       if (editing) {
         if (editing.id > 0) {
@@ -77,6 +102,7 @@ export function CategoriesPage() {
           const newCat: Category & { is_pending?: boolean } = {
             id: tempId,
             name: data.name,
+            business_type: data.business_type,
             description: data.description,
             sort_order: data.sort_order,
             is_active: true,
@@ -133,33 +159,123 @@ export function CategoriesPage() {
       setDeleteConfirm(null);
       loadCategories();
     }
-  };
+  }
 
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'cards' | 'table'>(() =>
     typeof window !== 'undefined' && window.innerWidth < 1024 ? 'cards' : 'table'
   );
 
-  const filteredCategories = categories.filter(c => {
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return c.name.toLowerCase().includes(q) || (c.description && c.description.toLowerCase().includes(q));
-  });
+  // Helper to resolve business department of a category (defaulting by legacy names if unset)
+  const getDeptOfCategory = useCallback((cat: Category): BusinessType => {
+    if (cat.business_type) return cat.business_type;
+    const n = cat.name.toLowerCase();
+    if (n.includes('bbq') || n.includes('ihaw') || n.includes('barbeque')) return 'barbeque';
+    if (n.includes('rice') || n.includes('bigas')) return 'rice';
+    if (n.includes('gulay') || n.includes('vegetable')) return 'vegetables';
+    return 'groceries';
+  }, []);
 
-  const totalProducts = categories.reduce((sum, c) => sum + (c.product_count ?? 0), 0);
-  const activeCount = categories.filter(c => (c.product_count ?? 0) > 0).length;
+  // User preference: default to only listing categories that have products!
+  const [onlyWithProducts, setOnlyWithProducts] = useState(true);
+  const [cleaningUp, setCleaningUp] = useState(false);
+
+  // Strict Department Scoping (No "Lahat" button)
+  const allDeptCategories = useMemo(() => {
+    return categories.filter(c => getDeptOfCategory(c) === selectedDept);
+  }, [categories, selectedDept, getDeptOfCategory]);
+
+  const deptCategories = useMemo(() => {
+    if (!onlyWithProducts) return allDeptCategories;
+    return allDeptCategories.filter(c => (c.product_count ?? 0) > 0);
+  }, [allDeptCategories, onlyWithProducts]);
+
+  const filteredCategories = useMemo(() => {
+    if (!search.trim()) return deptCategories;
+    const q = search.toLowerCase();
+    return deptCategories.filter(c =>
+      c.name.toLowerCase().includes(q) || (c.description && c.description.toLowerCase().includes(q))
+    );
+  }, [deptCategories, search]);
+
+  const totalProducts = allDeptCategories.reduce((sum, c) => sum + (c.product_count ?? 0), 0);
+  const activeCount = allDeptCategories.filter(c => (c.product_count ?? 0) > 0).length;
+  const emptyCategoriesInDept = allDeptCategories.filter(c => (c.product_count ?? 0) === 0);
+  const activeDeptInfo = departments.find(d => d.id === selectedDept) || departments[0];
+
+  async function handleCleanupEmptyCategories() {
+    if (emptyCategoriesInDept.length === 0) {
+      alert('Walang walang-lamang kategorya sa ' + activeDeptInfo?.label);
+      return;
+    }
+    if (!window.confirm(`Sigurado ka bang nais mong tanggalin ang ${emptyCategoriesInDept.length} kategorya na walang laman na produkto sa ${activeDeptInfo?.label}?`)) {
+      return;
+    }
+    setCleaningUp(true);
+    try {
+      for (const cat of emptyCategoriesInDept) {
+        if (cat.id > 0) {
+          try {
+            await deleteCategory(cat.id);
+          } catch (_) {}
+        }
+        await deleteLocalCategory(cat.id);
+      }
+      setNoticeMsg(`Matagumpay na natanggal ang ${emptyCategoriesInDept.length} kategorya na walang produkto!`);
+      await loadCategories();
+      useSyncStore.getState().refreshCounts();
+    } catch (err) {
+      alert('May naging problema sa pag-delete: ' + String(err));
+    } finally {
+      setCleaningUp(false);
+    }
+  }
 
   return (
     <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-3.5 animate-fade-in pb-16 lg:pb-0">
       {/* Page Header */}
       <div className="flex-shrink-0 flex items-center justify-between gap-2">
         <div className="hidden lg:block">
-          <h1 className="text-xl sm:text-2xl font-bold text-surface-50 tracking-tight">Categories</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-surface-50 tracking-tight flex items-center gap-2">
+            <span>🏷️</span>
+            <span>Categories & Negosyo</span>
+          </h1>
           <p className="text-surface-400 mt-0.5 text-xs sm:text-sm">
-            Pamahalaan ang mga kategorya ng produkto at ayos ng menu
+            Pamahalaan ang mga kategorya kada linya ng negosyo nang hiwalay at organisado
           </p>
         </div>
-        <div className="flex items-center gap-1.5 w-full lg:w-auto justify-end">
+        <div className="flex items-center gap-1.5 w-full lg:w-auto justify-end flex-wrap">
+          {emptyCategoriesInDept.length > 0 && (
+            <button
+              onClick={handleCleanupEmptyCategories}
+              disabled={cleaningUp}
+              className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shadow-xs"
+              title="Tanggalin lahat ng kategorya na 0 ang laman"
+            >
+              <span>🗑️</span>
+              <span>{cleaningUp ? 'Tinatanggal...' : `Tanggalin Walang Laman (${emptyCategoriesInDept.length})`}</span>
+            </button>
+          )}
+          <button
+            onClick={() => setOnlyWithProducts(prev => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shadow-xs ${
+              onlyWithProducts
+                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                : 'bg-surface-800 border-surface-700 text-surface-300 hover:text-surface-100'
+            }`}
+            title="I-filter ang mga kategoryang may laman lang"
+          >
+            <span>{onlyWithProducts ? '✅' : '👁️'}</span>
+            <span>{onlyWithProducts ? `May Produkto Lang (${activeCount})` : `Lahat ng Categories (${allDeptCategories.length})`}</span>
+          </button>
+          <button
+            onClick={() => setShowDeptModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-200 border border-surface-700 text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            title="Magdagdag o mag-ayos ng mga Negosyo"
+          >
+            <span>🏢</span>
+            <span>+ Bagong Negosyo</span>
+          </button>
           <button
             onClick={() => { setEditing(null); setShowForm(true); }}
             className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs sm:text-sm font-semibold shadow-xs shadow-primary-600/20 transition-all cursor-pointer whitespace-nowrap"
@@ -185,12 +301,58 @@ export function CategoriesPage() {
         </div>
       )}
 
-      {/* KPI Summary Cards */}
+      {/* ── Strict Department Ribbon (NO "Lahat" button) ── */}
+      <div className="flex-shrink-0 flex items-center justify-between gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[10px] font-bold text-surface-400 uppercase tracking-wider shrink-0 mr-1 hidden sm:inline">
+            Negosyo:
+          </span>
+          {departments.map(dept => {
+            const isActive = selectedDept === dept.id;
+            return (
+              <button
+                key={dept.id}
+                onClick={() => setSelectedDept(dept.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border ${
+                  isActive
+                    ? `${dept.activeColor} shadow-md`
+                    : 'bg-surface-800/80 hover:bg-surface-700/80 text-surface-400 hover:text-surface-200 border-surface-700/60'
+                }`}
+              >
+                <span>{dept.icon}</span>
+                <span>{dept.label}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  isActive ? 'bg-white/20 text-white' : 'bg-surface-700/60 text-surface-400'
+                }`}>
+                  {categories.filter(c => getDeptOfCategory(c) === dept.id).length}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* In-place Edit Button for Active Department */}
+        <button
+          onClick={() => {
+            setDeptToEdit(activeDeptInfo);
+            setShowDeptModal(true);
+          }}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-surface-800/90 hover:bg-surface-700 text-surface-300 hover:text-surface-100 border border-surface-700/60 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shadow-xs shrink-0"
+          title={`I-edit ang Profile, Icon, o Unit ng ${activeDeptInfo?.label}`}
+        >
+          <span>⚙️</span>
+          <span className="hidden xs:inline">Ayusin ang {activeDeptInfo?.label}</span>
+        </button>
+      </div>
+
+      {/* KPI Summary Cards (Scoped strictly to active department) */}
       <div className="flex-shrink-0 grid grid-cols-3 gap-1.5 sm:gap-2">
         <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
           <div className="min-w-0">
-            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Total Categories</span>
-            <span className="text-xs sm:text-base font-extrabold text-surface-100 block truncate">{categories.length}</span>
+            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">
+              {activeDeptInfo?.label} Categories
+            </span>
+            <span className="text-xs sm:text-base font-extrabold text-surface-100 block truncate">{deptCategories.length}</span>
           </div>
           <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">uri</span>
         </div>
@@ -206,7 +368,7 @@ export function CategoriesPage() {
             <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Total Products</span>
             <span className="text-xs sm:text-base font-extrabold text-primary-400 block truncate">{totalProducts}</span>
           </div>
-          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">nakatalaga</span>
+          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">sa {activeDeptInfo?.label}</span>
         </div>
       </div>
 
@@ -219,7 +381,7 @@ export function CategoriesPage() {
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search categories by name or description..."
+          placeholder={`Maghanap ng kategorya sa ${activeDeptInfo?.label || 'Negosyo'}...`}
           className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-surface-900 border border-surface-700 text-surface-100 text-xs placeholder:text-surface-500 focus:outline-none focus:border-primary-500 transition-colors"
         />
       </div>
@@ -230,10 +392,11 @@ export function CategoriesPage() {
         <div className="px-3 py-2 sm:px-4 sm:py-2.5 bg-surface-900/70 border-b border-surface-700/50 flex items-center justify-between gap-2 flex-nowrap shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <h3 className="text-xs sm:text-sm font-bold text-surface-100 flex items-center gap-1.5 truncate">
-              <span>🏷️</span> <span>Talaan ng mga Kategorya</span>
+              <span>{activeDeptInfo?.icon || '🏷️'}</span>
+              <span>Kategorya sa {activeDeptInfo?.label}</span>
             </h3>
             <span className="text-[10px] sm:text-xs text-surface-400 hidden sm:inline whitespace-nowrap">
-              ({filteredCategories.length} total)
+              ({filteredCategories.length} kategorya)
             </span>
           </div>
 
@@ -275,19 +438,19 @@ export function CategoriesPage() {
             </div>
           ) : filteredCategories.length === 0 ? (
             <div className="flex-1 min-h-0 flex flex-col items-center justify-center py-12 text-center p-4">
-              <span className="text-3xl mb-2 block">🏷️</span>
+              <span className="text-3xl mb-2 block">{activeDeptInfo?.icon || '🏷️'}</span>
               <p className="text-surface-300 font-medium text-xs sm:text-sm">
-                {search ? 'Walang nahanap na kategorya' : 'Wala pang kategorya'}
+                {search ? 'Walang nahanap na kategorya' : `Wala pang kategorya sa ${activeDeptInfo?.label}`}
               </p>
               <p className="text-surface-500 text-[11px] mt-0.5 mb-3">
-                {search ? 'Subukan ang ibang keyword sa paghahanap' : 'Magdagdag ng unang kategorya para sa inyong mga produkto'}
+                {search ? 'Subukan ang ibang keyword sa paghahanap' : `Magdagdag ng kategorya para sa ${activeDeptInfo?.label}`}
               </p>
               {!search && (
                 <button
                   onClick={() => { setEditing(null); setShowForm(true); }}
                   className="px-3.5 py-1.5 rounded-lg bg-primary-600 text-white text-xs font-semibold hover:bg-primary-500 transition-colors cursor-pointer"
                 >
-                  + Add Category
+                  + Magdagdag sa {activeDeptInfo?.label}
                 </button>
               )}
             </div>
@@ -360,6 +523,7 @@ export function CategoriesPage() {
                   <tr className="sticky top-0 bg-surface-900/95 z-10 backdrop-blur-xs border-b border-surface-700/80 text-[10px] font-bold text-surface-400 uppercase tracking-wider">
                     <th className="px-3 py-2 w-16 text-center">Order</th>
                     <th className="px-3 py-2">Category Name</th>
+                    <th className="px-3 py-2">Negosyo</th>
                     <th className="px-3 py-2">Description</th>
                     <th className="px-3 py-2 text-center">Products</th>
                     <th className="px-3 py-2 text-center">Status</th>
@@ -367,57 +531,66 @@ export function CategoriesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-700/40 font-medium text-surface-200">
-                  {filteredCategories.map(cat => (
-                    <tr key={cat.id} className="hover:bg-surface-700/30 transition-colors">
-                      <td className="px-3 py-2 text-center text-surface-400 font-mono">
-                        {cat.sort_order}
-                      </td>
-                      <td className="px-3 py-2 font-bold text-surface-100">
-                        {cat.name}
-                      </td>
-                      <td className="px-3 py-2 text-surface-400 max-w-xs truncate">
-                        {cat.description || <span className="italic text-surface-600">—</span>}
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <span className="px-2 py-0.5 rounded-md bg-primary-500/10 text-primary-400 font-bold border border-primary-500/20">
-                          {cat.product_count ?? 0}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        {(cat.is_pending || cat.id < 0) ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 whitespace-nowrap">
-                            Pending Sync
+                  {filteredCategories.map(cat => {
+                    const dept = departments.find(d => d.id === getDeptOfCategory(cat));
+                    return (
+                      <tr key={cat.id} className="hover:bg-surface-700/30 transition-colors">
+                        <td className="px-3 py-2 text-center text-surface-400 font-mono">
+                          {cat.sort_order}
+                        </td>
+                        <td className="px-3 py-2 font-bold text-surface-100">
+                          {cat.name}
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${dept?.badgeBg || 'bg-surface-700 text-surface-300 border-surface-600'}`}>
+                            <span>{dept?.icon || '🏢'}</span>
+                            <span>{dept?.label || cat.business_type}</span>
                           </span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
-                            Active
+                        </td>
+                        <td className="px-3 py-2 text-surface-400 max-w-xs truncate">
+                          {cat.description || <span className="italic text-surface-600">—</span>}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className="px-2 py-0.5 rounded-md bg-primary-500/10 text-primary-400 font-bold border border-primary-500/20">
+                            {cat.product_count ?? 0}
                           </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => { setEditing(cat); setShowForm(true); }}
-                            className="p-1 rounded text-surface-300 hover:text-primary-400 hover:bg-surface-700 transition-colors cursor-pointer"
-                            title="Edit Category"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                            </svg>
-                          </button>
-                          <button
-                            onClick={() => setDeleteConfirm(cat)}
-                            className="p-1 rounded text-surface-300 hover:text-danger-400 hover:bg-surface-700 transition-colors cursor-pointer"
-                            title="Delete Category"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          {(cat.is_pending || cat.id < 0) ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 whitespace-nowrap">
+                              Pending Sync
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap">
+                              Active
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => { setEditing(cat); setShowForm(true); }}
+                              className="p-1 rounded text-surface-300 hover:text-primary-400 hover:bg-surface-700 transition-colors cursor-pointer"
+                              title="Edit Category"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => setDeleteConfirm(cat)}
+                              className="p-1 rounded text-surface-300 hover:text-danger-400 hover:bg-surface-700 transition-colors cursor-pointer"
+                              title="Delete Category"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -427,7 +600,7 @@ export function CategoriesPage() {
         {/* Pinned Card Footer */}
         <div className="flex-shrink-0 px-3 py-2 bg-surface-900/90 border-t border-surface-700/60 flex items-center justify-between text-[11px] text-surface-400">
           <span className="truncate">
-            Kabuuang Kategorya: <strong className="text-surface-200">{filteredCategories.length}</strong>
+            {activeDeptInfo?.label} Kategorya: <strong className="text-surface-200">{filteredCategories.length}</strong>
           </span>
           <span className="truncate ml-2">
             Kabuuang Produkto: <strong className="text-primary-400">{totalProducts}</strong>
@@ -439,8 +612,27 @@ export function CategoriesPage() {
       {showForm && (
         <CategoryFormModal
           category={editing}
+          defaultDept={selectedDept}
+          departments={departments}
           onSave={handleSave}
           onClose={() => { setShowForm(false); setEditing(null); }}
+        />
+      )}
+
+      {/* Business Department Management Modal */}
+      {showDeptModal && (
+        <BusinessDepartmentModal
+          departments={departments}
+          initialDeptToEdit={deptToEdit}
+          onClose={() => {
+            setShowDeptModal(false);
+            setDeptToEdit(null);
+          }}
+          onUpdated={(updatedDepts, activeId) => {
+            setDepartments(updatedDepts);
+            if (activeId) setSelectedDept(activeId);
+            setDeptToEdit(null);
+          }}
         />
       )}
 
@@ -464,12 +656,15 @@ export function CategoriesPage() {
   );
 }
 
-function CategoryFormModal({ category, onSave, onClose }: {
+function CategoryFormModal({ category, defaultDept, departments, onSave, onClose }: {
   category: Category | null;
-  onSave: (data: { name: string; description: string; sort_order: number }) => Promise<void>;
+  defaultDept: BusinessType;
+  departments: BusinessDepartment[];
+  onSave: (data: { name: string; business_type: BusinessType; description: string; sort_order: number }) => Promise<void>;
   onClose: () => void;
 }) {
   const [name, setName] = useState(category?.name ?? '');
+  const [businessType, setBusinessType] = useState<BusinessType>(category?.business_type || defaultDept);
   const [description, setDescription] = useState(category?.description ?? '');
   const [sortOrder, setSortOrder] = useState(category?.sort_order ?? 0);
   const [saving, setSaving] = useState(false);
@@ -481,7 +676,12 @@ function CategoryFormModal({ category, onSave, onClose }: {
     setSaving(true);
     setFormError('');
     try {
-      await onSave({ name: name.trim(), description: description.trim(), sort_order: sortOrder });
+      await onSave({
+        name: name.trim(),
+        business_type: businessType,
+        description: description.trim(),
+        sort_order: sortOrder,
+      });
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Save failed');
     } finally {
@@ -500,9 +700,41 @@ function CategoryFormModal({ category, onSave, onClose }: {
         </div>
         {formError && <div className="mb-4 p-3 rounded-lg bg-danger-500/10 border border-danger-500/30 text-danger-500 text-sm">{formError}</div>}
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Business Line Selector */}
           <div>
-            <label className="block text-xs font-medium text-surface-400 mb-1.5">Name *</label>
-            <input type="text" value={name} onChange={e => setName(e.target.value)} className="form-input" placeholder="e.g., Coffee" required />
+            <label className="block text-xs font-medium text-surface-400 mb-1.5">Linya ng Negosyo (Business Line) *</label>
+            <div className="grid grid-cols-2 gap-2">
+              {departments.map(dept => {
+                const isSelected = businessType === dept.id;
+                return (
+                  <button
+                    key={dept.id}
+                    type="button"
+                    onClick={() => setBusinessType(dept.id)}
+                    className={`flex items-center gap-2 p-2 rounded-xl border text-xs font-bold transition-all text-left cursor-pointer ${
+                      isSelected
+                        ? `${dept.activeColor} border-white/20 shadow-xs`
+                        : 'bg-surface-900 border-surface-700 text-surface-300 hover:border-surface-600'
+                    }`}
+                  >
+                    <span className="text-base">{dept.icon}</span>
+                    <span className="truncate">{dept.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-surface-400 mb-1.5">Category Name *</label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="form-input"
+              placeholder="e.g., Hot Beverages, Pork Skewers"
+              required
+            />
           </div>
           <div>
             <label className="block text-xs font-medium text-surface-400 mb-1.5">Description</label>

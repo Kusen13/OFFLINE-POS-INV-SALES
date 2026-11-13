@@ -22,11 +22,18 @@ export interface PaginatedResponse<T> {
 
 export interface AppSettings {
   store_name: string;
+  store_subtitle?: string;
+  store_address?: string;
+  store_contact?: string;
+  store_logo?: string | null;
   currency: string;
   currency_symbol: string;
   tax_rate: string;
+  receipt_header?: string;
   receipt_footer: string;
   low_stock_default: string;
+  printer_width?: '58mm' | '80mm';
+  cashier_list?: string;
 }
 
 export interface DashboardSummary {

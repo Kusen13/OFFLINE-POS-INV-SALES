@@ -82,12 +82,9 @@ export function SuppliersPage() {
   const openNew = () => { setEditing(null); setShowForm(true); };
   const openEdit = (s: Supplier) => { setEditing(s); setShowForm(true); };
 
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>(() =>
-    typeof window !== 'undefined' && window.innerWidth < 1024 ? 'cards' : 'table'
-  );
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-3.5 animate-fade-in pb-16 lg:pb-0">
+    <div className="flex-1 min-h-0 flex flex-col space-y-1.5 sm:space-y-2 animate-fade-in pb-16 lg:pb-0">
       {/* Toast */}
       {toast && (
         <div className={`fixed top-4 right-4 z-[100] px-4 py-2.5 rounded-xl text-sm font-semibold shadow-xl animate-fade-in border
@@ -96,111 +93,54 @@ export function SuppliersPage() {
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex-shrink-0 flex items-center justify-between gap-2">
-        <div className="hidden lg:block">
-          <h1 className="text-xl sm:text-2xl font-bold text-surface-50 tracking-tight">
-            Supplier Management
-          </h1>
-          <p className="text-surface-400 mt-0.5 text-xs sm:text-sm">
-            Listahan ng mga supplier at reseller — puwede i-filter sa Re-order sheet
-          </p>
-        </div>
-
-        <div className="flex items-center gap-1.5 w-full lg:w-auto justify-end">
-          <button
-            onClick={openNew}
-            className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs sm:text-sm font-semibold shadow-xs shadow-primary-600/20 transition-all cursor-pointer whitespace-nowrap"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            <span>+ Add Supplier</span>
-          </button>
-        </div>
+      {/* ── ROW 1: Title + Add Supplier ── */}
+      <div className="flex-shrink-0 flex items-center justify-between gap-1.5 flex-nowrap">
+        <span className="text-sm font-bold text-surface-100 whitespace-nowrap shrink-0 flex items-center gap-1.5">
+          <span>🏪</span> Suppliers Directory
+        </span>
+        <button
+          onClick={openNew}
+          className="h-7 px-3 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-[11px] font-semibold shadow-xs flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 transition-colors"
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          + Add Supplier
+        </button>
       </div>
 
-      {/* Compact KPI Summary Cards */}
-      <div className="flex-shrink-0 grid grid-cols-3 gap-1.5 sm:gap-2">
-        <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
-          <div className="min-w-0">
-            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Total Suppliers</span>
-            <span className="text-xs sm:text-base font-extrabold text-surface-100 block truncate">{suppliers.length}</span>
-          </div>
-          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">tindahan</span>
+      {/* ── ROW 2: Search + KPI Ribbon ── */}
+      <div className="flex-shrink-0 flex items-center gap-1.5 flex-nowrap overflow-x-auto no-scrollbar">
+        <div className="relative flex-1 min-w-[130px] max-w-xs">
+          <svg className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search suppliers..."
+            className="w-full h-7 pl-7 pr-3 text-[11px] rounded-lg bg-surface-900 border border-surface-700/60 text-surface-100 placeholder-surface-500 focus:outline-none focus:border-primary-500"
+          />
         </div>
-        <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
-          <div className="min-w-0">
-            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Active</span>
-            <span className="text-xs sm:text-base font-extrabold text-emerald-400 block truncate">{activeCount}</span>
-          </div>
-          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">aktibo</span>
-        </div>
-        <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
-          <div className="min-w-0">
-            <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Inactive</span>
-            <span className="text-xs sm:text-base font-extrabold text-surface-400 block truncate">{suppliers.length - activeCount}</span>
-          </div>
-          <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">nakatago</span>
-        </div>
+        <span className="h-7 px-2 rounded-lg bg-surface-800/70 border border-surface-700/40 flex items-center gap-1 text-[10px] font-bold shrink-0">
+          <span className="text-surface-400">Total</span>
+          <span className="text-surface-100">{suppliers.length}</span>
+        </span>
+        <span className="h-7 px-2 rounded-lg bg-surface-800/70 border border-surface-700/40 flex items-center gap-1 text-[10px] font-bold shrink-0">
+          <span className="text-surface-400">Active</span>
+          <span className="text-emerald-400">{activeCount}</span>
+        </span>
+        <span className="h-7 px-2 rounded-lg bg-surface-800/70 border border-surface-700/40 flex items-center gap-1 text-[10px] font-bold shrink-0 hidden sm:flex">
+          <span className="text-surface-400">Inactive</span>
+          <span className="text-surface-400">{suppliers.length - activeCount}</span>
+        </span>
       </div>
 
-      {/* Search Input */}
-      <div className="flex-shrink-0 relative">
-        <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search supplier by name, contact, phone, or address..."
-          className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-surface-900 border border-surface-700 text-surface-100 text-xs placeholder:text-surface-500 focus:outline-none focus:border-primary-500 transition-colors"
-        />
-      </div>
-
-      {/* Main Table / Cards Card Container */}
+      {/* Main Table Container */}
       <div className="flex-1 min-h-0 bg-surface-800/50 rounded-xl border border-surface-700/50 flex flex-col overflow-hidden shadow-sm">
-        {/* Header Bar with View Switcher */}
-        <div className="px-3 py-2 sm:px-4 sm:py-2.5 bg-surface-900/70 border-b border-surface-700/50 flex items-center justify-between gap-2 flex-nowrap shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <h3 className="text-xs sm:text-sm font-bold text-surface-100 flex items-center gap-1.5 truncate">
-              <span>🏪</span> <span>Talaan ng mga Supplier</span>
-            </h3>
-            <span className="text-[10px] sm:text-xs text-surface-400 hidden sm:inline whitespace-nowrap">
-              ({filtered.length} total)
-            </span>
-          </div>
-
-          {/* View Switcher: [ 📱 Cards | 📋 Table ] */}
-          <div className="flex items-center gap-1 bg-surface-800/80 p-0.5 rounded-lg border border-surface-700/60 shrink-0">
-            <button
-              onClick={() => setViewMode('cards')}
-              className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
-                viewMode === 'cards'
-                  ? 'bg-primary-600 text-white shadow-xs'
-                  : 'text-surface-400 hover:text-surface-200'
-              }`}
-              title="Cards View"
-            >
-              <span>📱</span> <span className="hidden xs:inline">Cards</span>
-            </button>
-            <button
-              onClick={() => setViewMode('table')}
-              className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
-                viewMode === 'table'
-                  ? 'bg-primary-600 text-white shadow-xs'
-                  : 'text-surface-400 hover:text-surface-200'
-              }`}
-              title="Table View"
-            >
-              <span>📋</span> <span className="hidden xs:inline">Table</span>
-            </button>
-          </div>
-        </div>
-
         {/* Content Container */}
-        <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
           {loading ? (
             <div className="flex-1 min-h-0 flex items-center justify-center py-16">
               <div className="flex flex-col items-center gap-2">
@@ -226,19 +166,8 @@ export function SuppliersPage() {
                 </button>
               )}
             </div>
-          ) : viewMode === 'cards' ? (
-            <div className="p-2 sm:p-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-2.5">
-              {filtered.map(s => (
-                <SupplierCard
-                  key={s.id}
-                  supplier={s}
-                  onEdit={() => openEdit(s)}
-                  onDelete={() => setDeletingId(s.id)}
-                />
-              ))}
-            </div>
           ) : (
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-left border-collapse min-w-[650px] whitespace-nowrap">
               <thead className="sticky top-0 bg-surface-900/95 border-b border-surface-700/60 z-10 backdrop-blur-xs shadow-xs">
                 <tr>
                   <th className="px-3 py-2 text-[11px] font-bold text-surface-400 uppercase whitespace-nowrap">Supplier Name</th>
@@ -358,85 +287,6 @@ export function SuppliersPage() {
   );
 }
 
-// ============================================================
-// Supplier Card
-// ============================================================
-
-function SupplierCard({ supplier, onEdit, onDelete }: {
-  supplier: Supplier;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <div className={`relative p-3 sm:p-4 rounded-xl border shadow-xs transition-all hover:shadow-md
-      ${supplier.is_active
-        ? 'bg-surface-800/90 border-surface-700/60 hover:border-primary-500/40'
-        : 'bg-surface-900/70 border-surface-800 opacity-60'
-      }`}>
-      {/* Status pill */}
-      <div className="absolute top-3 right-3">
-        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${supplier.is_active ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-surface-700 text-surface-500 border border-surface-600'}`}>
-          {supplier.is_active ? 'Active' : 'Inactive'}
-        </span>
-      </div>
-
-      {/* Name */}
-      <div className="flex items-start gap-2 mb-2 pr-14">
-        <span className="text-xl shrink-0">🏪</span>
-        <div className="min-w-0">
-          <p className="font-bold text-surface-100 text-sm leading-tight truncate">{supplier.name}</p>
-          {supplier.contact_person && (
-            <p className="text-xs text-surface-400 truncate mt-0.5">👤 {supplier.contact_person}</p>
-          )}
-        </div>
-      </div>
-
-      {/* Details */}
-      <div className="space-y-1 mb-3">
-        {supplier.phone && (
-          <div className="flex items-center gap-1.5 text-xs text-surface-300">
-            <span>📞</span>
-            <a href={`tel:${supplier.phone}`} className="hover:text-primary-400 transition-colors truncate">{supplier.phone}</a>
-          </div>
-        )}
-        {supplier.address && (
-          <div className="flex items-start gap-1.5 text-xs text-surface-400">
-            <span className="shrink-0 mt-0.5">📍</span>
-            <span className="truncate">{supplier.address}</span>
-          </div>
-        )}
-        {supplier.email && (
-          <div className="flex items-center gap-1.5 text-xs text-surface-400">
-            <span>✉️</span>
-            <a href={`mailto:${supplier.email}`} className="hover:text-primary-400 transition-colors truncate">{supplier.email}</a>
-          </div>
-        )}
-        {supplier.notes && (
-          <div className="flex items-start gap-1.5 text-xs text-amber-400/80 bg-amber-500/10 rounded-lg px-2 py-1 border border-amber-500/20">
-            <span className="shrink-0">📝</span>
-            <span className="line-clamp-2">{supplier.notes}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Actions */}
-      <div className="flex gap-1.5">
-        <button
-          onClick={onEdit}
-          className="flex-1 px-2.5 py-1.5 rounded-lg bg-surface-700 hover:bg-surface-600 text-surface-200 text-xs font-semibold transition-colors cursor-pointer"
-        >
-          ✏️ I-edit
-        </button>
-        <button
-          onClick={onDelete}
-          className="px-2.5 py-1.5 rounded-lg bg-danger-500/10 hover:bg-danger-500/20 text-danger-400 text-xs font-semibold transition-colors cursor-pointer border border-danger-500/20"
-        >
-          🗑️
-        </button>
-      </div>
-    </div>
-  );
-}
 
 // ============================================================
 // Supplier Form Modal

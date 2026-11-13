@@ -41,12 +41,14 @@ function ensureReordersTable(PDO $pdo): void {
       `id` VARCHAR(64) NOT NULL,
       `order_date` DATE NOT NULL,
       `based_on_date` DATE DEFAULT NULL,
-      `status` ENUM('DRAFT', 'ORDERED', 'RECEIVED') NOT NULL DEFAULT 'DRAFT',
+      `status` ENUM('DRAFT', 'ORDERED', 'LOCKED', 'RECEIVED') NOT NULL DEFAULT 'DRAFT',
       `total_quantity` INT NOT NULL DEFAULT 0,
       `total_cost` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
       `supplier_name` VARCHAR(100) DEFAULT 'BBQ Supplier',
       `notes` TEXT DEFAULT NULL,
       `items_data` LONGTEXT NOT NULL,
+      `dept_status` JSON DEFAULT NULL,
+      `dept_received_at` JSON DEFAULT NULL,
       `received_at` DATETIME DEFAULT NULL,
       `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -56,8 +58,20 @@ function ensureReordersTable(PDO $pdo): void {
     try {
         $pdo->exec($sql);
     } catch (Exception $e) {
-        // Table may already exist or error logged
+        // Table may already exist — try to ALTER to add new columns if missing
     }
+
+    // Migrate: add dept_status column if it doesn't exist yet
+    try {
+        $pdo->exec("ALTER TABLE `reorders` ADD COLUMN `dept_status` JSON DEFAULT NULL");
+    } catch (Exception $e) { /* already exists */ }
+    try {
+        $pdo->exec("ALTER TABLE `reorders` ADD COLUMN `dept_received_at` JSON DEFAULT NULL");
+    } catch (Exception $e) { /* already exists */ }
+    // Extend status ENUM to include LOCKED
+    try {
+        $pdo->exec("ALTER TABLE `reorders` MODIFY `status` ENUM('DRAFT', 'ORDERED', 'LOCKED', 'RECEIVED') NOT NULL DEFAULT 'DRAFT'");
+    } catch (Exception $e) { /* already correct */ }
 }
 
 function getReorderByDate(PDO $pdo, string $date): void {
@@ -96,20 +110,23 @@ function saveReorderRecord(PDO $pdo): void {
     $orderDate = $data['order_date'];
     $id = $data['id'] ?? "reorder-{$orderDate}";
     $basedOn = $data['based_on_date'] ?? null;
-    $status = in_array($data['status'] ?? '', ['DRAFT', 'ORDERED', 'RECEIVED']) ? $data['status'] : 'DRAFT';
+    $status = in_array($data['status'] ?? '', ['DRAFT', 'ORDERED', 'LOCKED', 'RECEIVED']) ? $data['status'] : 'DRAFT';
     $totalQty = (int)($data['total_quantity'] ?? 0);
     $totalCost = (float)($data['total_cost'] ?? 0.0);
     $supplier = $data['supplier_name'] ?? 'BBQ Supplier';
     $notes = $data['notes'] ?? null;
     $receivedAt = !empty($data['received_at']) ? date('Y-m-d H:i:s', strtotime($data['received_at'])) : null;
     $itemsJson = json_encode($data['items'] ?? []);
+    // Per-department lock status (JSON object: { "barbeque": "RECEIVED", "groceries": "DRAFT", ... })
+    $deptStatus = isset($data['dept_status']) ? json_encode($data['dept_status']) : null;
+    $deptReceivedAt = isset($data['dept_received_at']) ? json_encode($data['dept_received_at']) : null;
 
     $sql = 'INSERT INTO reorders (
         id, order_date, based_on_date, status, total_quantity, total_cost,
-        supplier_name, notes, items_data, received_at, updated_at
+        supplier_name, notes, items_data, dept_status, dept_received_at, received_at, updated_at
     ) VALUES (
         :id, :order_date, :based_on_date, :status, :total_quantity, :total_cost,
-        :supplier_name, :notes, :items_data, :received_at, NOW()
+        :supplier_name, :notes, :items_data, :dept_status, :dept_received_at, :received_at, NOW()
     ) ON DUPLICATE KEY UPDATE
         based_on_date = VALUES(based_on_date),
         status = VALUES(status),
@@ -118,6 +135,8 @@ function saveReorderRecord(PDO $pdo): void {
         supplier_name = VALUES(supplier_name),
         notes = VALUES(notes),
         items_data = VALUES(items_data),
+        dept_status = VALUES(dept_status),
+        dept_received_at = VALUES(dept_received_at),
         received_at = VALUES(received_at),
         updated_at = NOW()';
 
@@ -132,6 +151,8 @@ function saveReorderRecord(PDO $pdo): void {
         ':supplier_name' => $supplier,
         ':notes' => $notes,
         ':items_data' => $itemsJson,
+        ':dept_status' => $deptStatus,
+        ':dept_received_at' => $deptReceivedAt,
         ':received_at' => $receivedAt,
     ]);
 
@@ -163,6 +184,8 @@ function formatReorderRecord(array $row): array {
         'supplier_name' => $row['supplier_name'],
         'notes' => $row['notes'],
         'items' => json_decode($row['items_data'] ?? '[]', true) ?: [],
+        'dept_status' => !empty($row['dept_status']) ? json_decode($row['dept_status'], true) : null,
+        'dept_received_at' => !empty($row['dept_received_at']) ? json_decode($row['dept_received_at'], true) : null,
         'received_at' => $row['received_at'],
         'created_at' => $row['created_at'],
         'updated_at' => $row['updated_at'],

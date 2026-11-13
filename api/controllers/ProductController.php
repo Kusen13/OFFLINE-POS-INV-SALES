@@ -18,6 +18,11 @@ function handleProducts(string $method, ?string $id, ?string $action): void {
         return;
     }
 
+    if ($method === 'POST' && $id === 'proxy-image') {
+        proxyImage();
+        return;
+    }
+
     switch ($method) {
         case 'GET':
             if ($id) {
@@ -78,16 +83,23 @@ function listProducts(PDO $pdo): void {
         $params[':item_type'] = $itemType;
     }
 
+    $businessType = sanitizeString(getQueryParam('business_type'));
+    if ($businessType) {
+        $where[] = '(c.business_type = :business_type OR p.business_type = :business_type_p)';
+        $params[':business_type'] = $businessType;
+        $params[':business_type_p'] = $businessType;
+    }
+
     $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
     // Count total
-    $countSql = "SELECT COUNT(*) FROM products p $whereClause";
+    $countSql = "SELECT COUNT(*) FROM products p LEFT JOIN categories c ON p.category_id = c.id $whereClause";
     $stmt = $pdo->prepare($countSql);
     $stmt->execute($params);
     $total = (int) $stmt->fetchColumn();
 
     // Fetch page
-    $sql = "SELECT p.*, c.name as category_name 
+    $sql = "SELECT p.*, c.name as category_name, c.business_type as business_type 
             FROM products p 
             LEFT JOIN categories c ON p.category_id = c.id 
             $whereClause 
@@ -107,15 +119,17 @@ function listProducts(PDO $pdo): void {
     $products = array_map(function ($p) {
         $p['id'] = (int) $p['id'];
         $p['category_id'] = (int) $p['category_id'];
+        $p['business_type'] = $p['business_type'] ?? 'groceries';
         $p['item_type'] = $p['item_type'] ?? 'product';
         $p['cost_price'] = (float) $p['cost_price'];
         $p['selling_price'] = (float) $p['selling_price'];
-        $p['current_stock'] = (int) $p['current_stock'];
-        $p['initial_stock'] = isset($p['initial_stock']) ? (int) $p['initial_stock'] : (int) $p['current_stock'];
+        $p['current_stock'] = (float) $p['current_stock'];
+        $p['initial_stock'] = isset($p['initial_stock']) ? (float) $p['initial_stock'] : (float) $p['current_stock'];
         $p['initial_stock_date'] = $p['initial_stock_date'] ?? null;
-        $p['low_stock_threshold'] = (int) $p['low_stock_threshold'];
-        $p['target_stock'] = isset($p['target_stock']) ? (int) $p['target_stock'] : 20;
+        $p['low_stock_threshold'] = (float) $p['low_stock_threshold'];
+        $p['target_stock'] = isset($p['target_stock']) ? (float) $p['target_stock'] : 20;
         $p['unit'] = $p['unit'] ?? 'sticks';
+        $p['sell_by_weight'] = (bool) ($p['sell_by_weight'] ?? false);
         $p['supplier_id'] = $p['supplier_id'] ?? null;
         $p['supplier_name'] = $p['supplier_name'] ?? null;
         $p['reseller_price'] = isset($p['reseller_price']) && $p['reseller_price'] !== null ? (float) $p['reseller_price'] : null;
@@ -128,7 +142,7 @@ function listProducts(PDO $pdo): void {
 
 function getProduct(PDO $pdo, int $id): void {
     $stmt = $pdo->prepare(
-        'SELECT p.*, c.name as category_name 
+        'SELECT p.*, c.name as category_name, c.business_type as business_type 
          FROM products p 
          LEFT JOIN categories c ON p.category_id = c.id 
          WHERE p.id = :id'
@@ -145,12 +159,13 @@ function getProduct(PDO $pdo, int $id): void {
     $product['item_type'] = $product['item_type'] ?? 'product';
     $product['cost_price'] = (float) $product['cost_price'];
     $product['selling_price'] = (float) $product['selling_price'];
-    $product['current_stock'] = (int) $product['current_stock'];
-    $product['initial_stock'] = isset($product['initial_stock']) ? (int) $product['initial_stock'] : (int) $product['current_stock'];
+    $product['current_stock'] = (float) $product['current_stock'];
+    $product['initial_stock'] = isset($product['initial_stock']) ? (float) $product['initial_stock'] : (float) $product['current_stock'];
     $product['initial_stock_date'] = $product['initial_stock_date'] ?? null;
-    $product['low_stock_threshold'] = (int) $product['low_stock_threshold'];
-    $product['target_stock'] = isset($product['target_stock']) ? (int) $product['target_stock'] : 20;
+    $product['low_stock_threshold'] = (float) $product['low_stock_threshold'];
+    $product['target_stock'] = isset($product['target_stock']) ? (float) $product['target_stock'] : 20;
     $product['unit'] = $product['unit'] ?? 'sticks';
+    $product['sell_by_weight'] = (bool) ($product['sell_by_weight'] ?? false);
     $product['supplier_id'] = $product['supplier_id'] ?? null;
     $product['supplier_name'] = $product['supplier_name'] ?? null;
     $product['reseller_price'] = isset($product['reseller_price']) && $product['reseller_price'] !== null ? (float) $product['reseller_price'] : null;
@@ -180,7 +195,7 @@ function createProduct(PDO $pdo): void {
         jsonError('SKU already exists', 409);
     }
 
-    $stockVal = isset($data['initial_stock']) ? sanitizeInt($data['initial_stock']) : sanitizeInt($data['current_stock'] ?? 0);
+    $stockVal = isset($data['initial_stock']) ? sanitizeDecimal($data['initial_stock']) : sanitizeDecimal($data['current_stock'] ?? 0);
     $initialStockDate = !empty($data['initial_stock_date']) ? $data['initial_stock_date'] : '2026-10-19';
     if ($initialStockDate < '2026-10-19') {
         $initialStockDate = '2026-10-19';
@@ -188,34 +203,43 @@ function createProduct(PDO $pdo): void {
     // Supplies are never for sale
     $sellingPrice = $itemType === 'supply' ? 0 : sanitizeDecimal($data['selling_price'] ?? 0);
 
+    $bType = sanitizeString($data['business_type'] ?? null);
+    if (!$bType && !empty($data['category_id'])) {
+        $cStmt = $pdo->prepare('SELECT business_type FROM categories WHERE id = :cid');
+        $cStmt->execute([':cid' => (int)$data['category_id']]);
+        $bType = $cStmt->fetchColumn() ?: 'groceries';
+    }
+
     $stmt = $pdo->prepare(
         'INSERT INTO products (
-            category_id, name, sku, description, item_type, cost_price, selling_price, current_stock, initial_stock, 
-            initial_stock_date, low_stock_threshold, target_stock, unit, supplier_id, supplier_name, reseller_price, image_path, is_active
+            category_id, business_type, name, sku, description, item_type, cost_price, selling_price, current_stock, initial_stock, 
+            initial_stock_date, low_stock_threshold, target_stock, unit, sell_by_weight, supplier_id, supplier_name, reseller_price, image_path, is_active
         ) VALUES (
-            :category_id, :name, :sku, :description, :item_type, :cost_price, :selling_price, :stock, :initial_stock, 
-            :initial_stock_date, :threshold, :target_stock, :unit, :supplier_id, :supplier_name, :reseller_price, :image, :active
+            :category_id, :business_type, :name, :sku, :description, :item_type, :cost_price, :selling_price, :stock, :initial_stock, 
+            :initial_stock_date, :threshold, :target_stock, :unit, :sell_by_weight, :supplier_id, :supplier_name, :reseller_price, :image, :active
         )'
     );
 
     $stmt->execute([
         ':category_id' => sanitizeInt($data['category_id']),
+        ':business_type' => $bType,
         ':name' => sanitizeString($data['name']),
         ':sku' => sanitizeString($data['sku']),
         ':description' => sanitizeString($data['description'] ?? null),
         ':item_type' => $itemType,
         ':cost_price' => sanitizeDecimal($data['cost_price'] ?? 0),
         ':selling_price' => $sellingPrice,
-        ':stock' => $stockVal,
-        ':initial_stock' => $stockVal,
+        ':stock' => sanitizeDecimal($data['current_stock'] ?? $stockVal),
+        ':initial_stock' => sanitizeDecimal($stockVal),
         ':initial_stock_date' => $initialStockDate,
-        ':threshold' => sanitizeInt($data['low_stock_threshold'] ?? 10),
-        ':target_stock' => sanitizeInt($data['target_stock'] ?? 20),
+        ':threshold' => sanitizeDecimal($data['low_stock_threshold'] ?? 10),
+        ':target_stock' => sanitizeDecimal($data['target_stock'] ?? 20),
         ':unit' => sanitizeString($data['unit'] ?? 'sticks'),
+        ':sell_by_weight' => isset($data['sell_by_weight']) && $data['sell_by_weight'] ? 1 : 0,
         ':supplier_id' => sanitizeString($data['supplier_id'] ?? null),
         ':supplier_name' => sanitizeString($data['supplier_name'] ?? null),
         ':reseller_price' => isset($data['reseller_price']) && $data['reseller_price'] !== '' ? sanitizeDecimal($data['reseller_price']) : null,
-        ':image' => sanitizeString($data['image_path'] ?? null),
+        ':image' => sanitizeImage($data['image_path'] ?? null),
         ':active' => isset($data['is_active']) ? (int) $data['is_active'] : 1,
     ]);
 
@@ -260,8 +284,8 @@ function updateProduct(PDO $pdo, int $id): void {
         }
     }
 
-    $currentStock = isset($data['current_stock']) ? sanitizeInt($data['current_stock']) : (int) $existing['current_stock'];
-    $initialStock = isset($data['initial_stock']) ? sanitizeInt($data['initial_stock']) : (isset($data['current_stock']) ? sanitizeInt($data['current_stock']) : (int) ($existing['initial_stock'] ?? $currentStock));
+    $currentStock = isset($data['current_stock']) ? sanitizeDecimal($data['current_stock']) : (float) $existing['current_stock'];
+    $initialStock = isset($data['initial_stock']) ? sanitizeDecimal($data['initial_stock']) : (isset($data['current_stock']) ? sanitizeDecimal($data['current_stock']) : (float) ($existing['initial_stock'] ?? $currentStock));
     $initialStockDate = !empty($data['initial_stock_date']) ? $data['initial_stock_date'] : ($existing['initial_stock_date'] ?? '2026-10-19');
     if ($initialStockDate < '2026-10-19') {
         $initialStockDate = '2026-10-19';
@@ -269,9 +293,20 @@ function updateProduct(PDO $pdo, int $id): void {
     $itemType = in_array($data['item_type'] ?? '', ['product', 'supply']) ? $data['item_type'] : ($existing['item_type'] ?? 'product');
     $sellingPrice = $itemType === 'supply' ? 0 : sanitizeDecimal($data['selling_price'] ?? $existing['selling_price']);
 
+    $bType = sanitizeString($data['business_type'] ?? null);
+    if (!$bType && !empty($data['category_id'])) {
+        $cStmt = $pdo->prepare('SELECT business_type FROM categories WHERE id = :cid');
+        $cStmt->execute([':cid' => (int)$data['category_id']]);
+        $bType = $cStmt->fetchColumn();
+    }
+    if (!$bType) {
+        $bType = $existing['business_type'] ?? 'groceries';
+    }
+
     $stmt = $pdo->prepare(
         'UPDATE products SET 
             category_id = :category_id,
+            business_type = :business_type,
             name = :name,
             sku = :sku,
             description = :description,
@@ -284,6 +319,7 @@ function updateProduct(PDO $pdo, int $id): void {
             low_stock_threshold = :threshold,
             target_stock = :target_stock,
             unit = :unit,
+            sell_by_weight = :sell_by_weight,
             supplier_id = :supplier_id,
             supplier_name = :supplier_name,
             reseller_price = :reseller_price,
@@ -295,22 +331,24 @@ function updateProduct(PDO $pdo, int $id): void {
 
     $stmt->execute([
         ':category_id' => sanitizeInt($data['category_id'] ?? $existing['category_id']),
+        ':business_type' => $bType,
         ':name' => sanitizeString($data['name'] ?? $existing['name']),
         ':sku' => sanitizeString($data['sku'] ?? $existing['sku']),
         ':description' => sanitizeString($data['description'] ?? $existing['description']),
         ':item_type' => $itemType,
         ':cost_price' => sanitizeDecimal($data['cost_price'] ?? $existing['cost_price']),
         ':selling_price' => $sellingPrice,
-        ':current_stock' => $currentStock,
-        ':initial_stock' => $initialStock,
+        ':current_stock' => sanitizeDecimal($data['current_stock'] ?? $existing['current_stock']),
+        ':initial_stock' => sanitizeDecimal($data['initial_stock'] ?? $existing['initial_stock'] ?? $existing['current_stock']),
         ':initial_stock_date' => $initialStockDate,
-        ':threshold' => sanitizeInt($data['low_stock_threshold'] ?? $existing['low_stock_threshold']),
-        ':target_stock' => sanitizeInt($data['target_stock'] ?? ($existing['target_stock'] ?? 20)),
+        ':threshold' => sanitizeDecimal($data['low_stock_threshold'] ?? $existing['low_stock_threshold']),
+        ':target_stock' => sanitizeDecimal($data['target_stock'] ?? ($existing['target_stock'] ?? 20)),
         ':unit' => sanitizeString($data['unit'] ?? ($existing['unit'] ?? 'sticks')),
+        ':sell_by_weight' => isset($data['sell_by_weight']) ? ((int)(bool)$data['sell_by_weight']) : (int)($existing['sell_by_weight'] ?? 0),
         ':supplier_id' => sanitizeString($data['supplier_id'] ?? $existing['supplier_id']),
         ':supplier_name' => sanitizeString($data['supplier_name'] ?? $existing['supplier_name']),
         ':reseller_price' => isset($data['reseller_price']) && $data['reseller_price'] !== '' ? sanitizeDecimal($data['reseller_price']) : (isset($existing['reseller_price']) ? $existing['reseller_price'] : null),
-        ':image' => sanitizeString($data['image_path'] ?? $existing['image_path']),
+        ':image' => sanitizeImage($data['image_path'] ?? $existing['image_path']),
         ':active' => isset($data['is_active']) ? (int) $data['is_active'] : (int) $existing['is_active'],
         ':id' => $id,
     ]);
@@ -337,7 +375,7 @@ function getLowStockProducts(PDO $pdo): void {
         'SELECT p.*, c.name as category_name 
          FROM products p 
          LEFT JOIN categories c ON p.category_id = c.id 
-         WHERE p.is_active = 1 AND p.current_stock <= p.low_stock_threshold 
+         WHERE p.is_active = 1 AND p.id != 999 AND (p.item_type IS NULL OR p.item_type != "service") AND p.current_stock <= p.low_stock_threshold 
          ORDER BY (CAST(p.current_stock AS SIGNED) - CAST(p.low_stock_threshold AS SIGNED)) ASC, p.name ASC'
     );
     $stmt->execute();
@@ -349,10 +387,11 @@ function getLowStockProducts(PDO $pdo): void {
         $p['item_type'] = $p['item_type'] ?? 'product';
         $p['cost_price'] = (float) $p['cost_price'];
         $p['selling_price'] = (float) $p['selling_price'];
-        $p['current_stock'] = (int) $p['current_stock'];
-        $p['low_stock_threshold'] = (int) $p['low_stock_threshold'];
-        $p['target_stock'] = isset($p['target_stock']) ? (int) $p['target_stock'] : 20;
+        $p['current_stock'] = (float) $p['current_stock'];
+        $p['low_stock_threshold'] = (float) $p['low_stock_threshold'];
+        $p['target_stock'] = isset($p['target_stock']) ? (float) $p['target_stock'] : 20;
         $p['unit'] = $p['unit'] ?? 'sticks';
+        $p['sell_by_weight'] = (bool) ($p['sell_by_weight'] ?? false);
         $p['supplier_id'] = $p['supplier_id'] ?? null;
         $p['supplier_name'] = $p['supplier_name'] ?? null;
         $p['reseller_price'] = isset($p['reseller_price']) && $p['reseller_price'] !== null ? (float) $p['reseller_price'] : null;
@@ -361,4 +400,43 @@ function getLowStockProducts(PDO $pdo): void {
     }, $products);
 
     jsonResponse($products);
+}
+
+function proxyImage(): void {
+    $body = getJsonBody();
+    $url = $body['url'] ?? '';
+    if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+        jsonError('Valid image URL required', 400);
+        return;
+    }
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+    $data = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    curl_close($ch);
+
+    if ($code !== 200 || empty($data)) {
+        jsonError('Failed to download image from URL', 400);
+        return;
+    }
+
+    $mime = 'image/jpeg';
+    if (!empty($contentType)) {
+        $parts = explode(';', $contentType);
+        $mime = trim($parts[0]);
+    }
+    if (!str_starts_with($mime, 'image/')) {
+        $mime = 'image/jpeg';
+    }
+
+    $base64 = base64_encode($data);
+    $dataUrl = 'data:' . $mime . ';base64,' . $base64;
+
+    jsonResponse(['dataUrl' => $dataUrl]);
 }

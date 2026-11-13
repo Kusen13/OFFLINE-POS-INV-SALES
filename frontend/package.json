@@ -12,11 +12,13 @@
   },
   "dependencies": {
     "@types/react-router-dom": "^5.3.3",
+    "html5-qrcode": "^2.3.8",
     "idb": "^8.0.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.4",
     "recharts": "^3.10.1",
+    "xlsx": "^0.18.5",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

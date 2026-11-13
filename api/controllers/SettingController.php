@@ -11,7 +11,7 @@ function handleSettings(string $method, ?string $id): void {
             getSettings($pdo);
             break;
         case 'PUT':
-            updateSettings($pdo);
+            updateSettings($pdo, $id);
             break;
         default:
             jsonMethodNotAllowed();
@@ -27,7 +27,7 @@ function getSettings(PDO $pdo): void {
     jsonResponse($settings);
 }
 
-function updateSettings(PDO $pdo): void {
+function updateSettings(PDO $pdo, ?string $id = null): void {
     $data = getJsonBody();
 
     $stmt = $pdo->prepare(
@@ -35,11 +35,29 @@ function updateSettings(PDO $pdo): void {
          ON DUPLICATE KEY UPDATE value = VALUES(value)'
     );
 
-    foreach ($data as $key => $value) {
+    if ($id !== null && $id !== '') {
+        $cleanKey = sanitizeString((string) $id);
+        $val = isset($data['value']) ? $data['value'] : (is_scalar($data) ? $data : json_encode($data));
+        $cleanVal = ($cleanKey === 'store_logo' || $cleanKey === 'app_logo')
+            ? sanitizeImage((string) $val)
+            : sanitizeString((string) $val);
+
         $stmt->execute([
-            ':key' => sanitizeString($key),
-            ':value' => sanitizeString((string) $value),
+            ':key' => $cleanKey,
+            ':value' => $cleanVal,
         ]);
+    } else {
+        foreach ($data as $key => $value) {
+            $cleanKey = sanitizeString((string) $key);
+            $cleanVal = ($cleanKey === 'store_logo' || $cleanKey === 'app_logo')
+                ? sanitizeImage((string) $value)
+                : sanitizeString((string) $value);
+
+            $stmt->execute([
+                ':key' => $cleanKey,
+                ':value' => $cleanVal,
+            ]);
+        }
     }
 
     getSettings($pdo);

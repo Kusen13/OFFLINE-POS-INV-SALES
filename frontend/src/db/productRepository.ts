@@ -218,7 +218,41 @@ export async function deleteLocalCategory(id: number): Promise<void> {
 export async function getAllCategories(): Promise<(Category & { is_pending?: boolean })[]> {
   const db = await getDB();
   const categories = await db.getAll('categories');
-  return categories.sort((a, b) => a.sort_order - b.sort_order);
+  if (categories && categories.length > 0) {
+    return categories.sort((a, b) => a.sort_order - b.sort_order);
+  }
+
+  // Fallback: If categories store is empty (e.g. offline seed or clean cache),
+  // extract unique categories directly from stored products
+  const products = await db.getAll('products');
+  const catMap = new Map<number, Category>();
+  for (const p of products) {
+    if (p.category_id && p.category_name && !catMap.has(p.category_id)) {
+      catMap.set(p.category_id, {
+        id: p.category_id,
+        name: p.category_name,
+        description: null,
+        sort_order: catMap.size + 1,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  const derived = Array.from(catMap.values());
+  if (derived.length > 0) {
+    try {
+      const tx = db.transaction('categories', 'readwrite');
+      for (const c of derived) {
+        await tx.store.put(c);
+      }
+      await tx.done;
+    } catch (_) {}
+    return derived;
+  }
+
+  return [];
 }
 
 // ============================================================
@@ -244,7 +278,11 @@ export async function replaceAllPaymentMethods(methods: PaymentMethod[]): Promis
 export async function getAllPaymentMethods(): Promise<PaymentMethod[]> {
   const db = await getDB();
   const methods = await db.getAll('paymentMethods');
-  return methods.filter(m => m.is_active).sort((a, b) => a.sort_order - b.sort_order);
+  const active = methods.filter(m => m.is_active).sort((a, b) => a.sort_order - b.sort_order);
+  if (!active.some(m => m.name.toLowerCase().includes('utang') || m.name.toLowerCase().includes('credit'))) {
+    active.push({ id: 3, name: 'Utang / Credit', is_active: true, sort_order: 3 });
+  }
+  return active;
 }
 
 // ============================================================
@@ -370,6 +408,7 @@ export async function adjustProductStock(
           entity: 'product',
           action: 'update',
           payload: { ...product },
+          entityId: product.id,
         });
       } catch { /* ignore */ }
     }
@@ -421,6 +460,7 @@ export async function setProductStock(
         entity: 'product',
         action: 'update',
         payload: { ...product },
+        entityId: product.id,
       });
     } catch { /* ignore */ }
   }

@@ -126,7 +126,7 @@ function processSingleSale(PDO $pdo, array $saleData, string $deviceId): array {
         throw new \InvalidArgumentException('Invalid or missing UUID');
     }
 
-    // Check for duplicate (idempotent)
+    // Check for duplicate UUID (idempotent retry)
     $stmt = $pdo->prepare('SELECT id, receipt_number FROM sales WHERE uuid = :uuid');
     $stmt->execute([':uuid' => $saleData['uuid']]);
     $existing = $stmt->fetch();
@@ -154,23 +154,47 @@ function processSingleSale(PDO $pdo, array $saleData, string $deviceId): array {
         throw new \InvalidArgumentException('Sale must contain at least one item');
     }
 
+    // Check if receipt_number is already used by a DIFFERENT sale in the database
+    $receiptNumber = sanitizeString($saleData['receipt_number']);
+    $stmtReceipt = $pdo->prepare('SELECT id, uuid FROM sales WHERE receipt_number = :receipt');
+    $stmtReceipt->execute([':receipt' => $receiptNumber]);
+    $receiptCollision = $stmtReceipt->fetch();
+
+    if ($receiptCollision) {
+        if ($receiptCollision['uuid'] === $saleData['uuid']) {
+            return [
+                'status' => 'duplicate',
+                'uuid' => $saleData['uuid'],
+                'receipt_number' => $receiptNumber,
+                'server_id' => (int) $receiptCollision['id'],
+            ];
+        } else {
+            // Collision from another device/session: auto-suffix so sync doesn't crash
+            $shortId = substr(md5($saleData['uuid']), 0, 4);
+            $receiptNumber = substr($receiptNumber, 0, 24) . '-' . $shortId;
+        }
+    }
+
     // Begin transaction
     $pdo->beginTransaction();
 
     try {
+        $customerId = !empty($saleData['customer_id']) ? sanitizeInt($saleData['customer_id']) : null;
+        $customerName = !empty($saleData['customer_name']) ? sanitizeString($saleData['customer_name']) : null;
+
         // Insert sale
         $stmt = $pdo->prepare(
             'INSERT INTO sales (uuid, receipt_number, subtotal, discount_amount, tax_amount, total_amount, 
-                               cash_tendered, change_amount, payment_method_id, payment_reference,
+                               cash_tendered, change_amount, payment_method_id, payment_reference, customer_id, customer_name,
                                source_device, notes, sold_at, synced_at) 
              VALUES (:uuid, :receipt, :subtotal, :discount, :tax, :total, 
-                     :cash, :change, :payment_id, :payment_ref,
+                     :cash, :change, :payment_id, :payment_ref, :customer_id, :customer_name,
                      :device, :notes, :sold_at, NOW())'
         );
 
         $stmt->execute([
             ':uuid' => $saleData['uuid'],
-            ':receipt' => sanitizeString($saleData['receipt_number']),
+            ':receipt' => $receiptNumber,
             ':subtotal' => sanitizeDecimal($saleData['subtotal'] ?? $saleData['total_amount']),
             ':discount' => sanitizeDecimal($saleData['discount_amount'] ?? 0),
             ':tax' => sanitizeDecimal($saleData['tax_amount'] ?? 0),
@@ -179,6 +203,8 @@ function processSingleSale(PDO $pdo, array $saleData, string $deviceId): array {
             ':change' => sanitizeDecimal($saleData['change_amount'] ?? null),
             ':payment_id' => sanitizeInt($saleData['payment_method_id']),
             ':payment_ref' => sanitizeString($saleData['payment_reference'] ?? null),
+            ':customer_id' => $customerId,
+            ':customer_name' => $customerName,
             ':device' => sanitizeString($deviceId),
             ':notes' => sanitizeString($saleData['notes'] ?? null),
             ':sold_at' => $saleData['sold_at'],
@@ -198,14 +224,19 @@ function processSingleSale(PDO $pdo, array $saleData, string $deviceId): array {
                  VALUES (:sale_id, :product_id, :name, :sku, :price, :cost, :qty, :total)'
             );
 
+            $prodId = sanitizeInt($item['product_id']);
+            if ($prodId <= 0) {
+                $prodId = 999;
+            }
+
             $stmt->execute([
                 ':sale_id' => $saleId,
-                ':product_id' => sanitizeInt($item['product_id']),
+                ':product_id' => $prodId,
                 ':name' => sanitizeString($item['product_name'] ?? 'Unknown'),
                 ':sku' => sanitizeString($item['product_sku'] ?? ''),
                 ':price' => sanitizeDecimal($item['unit_price'] ?? 0),
                 ':cost' => sanitizeDecimal($item['unit_cost'] ?? 0),
-                ':qty' => sanitizeInt($item['quantity']),
+                ':qty' => sanitizeDecimal($item['quantity']),
                 ':total' => sanitizeDecimal($item['line_total'] ?? ($item['unit_price'] * $item['quantity'])),
             ]);
 
@@ -214,9 +245,9 @@ function processSingleSale(PDO $pdo, array $saleData, string $deviceId): array {
             $stmt->execute([':id' => $item['product_id']]);
             $product = $stmt->fetch();
 
-            if ($product) {
-                $stockBefore = (int) $product['current_stock'];
-                $quantitySold = (int) $item['quantity'];
+            if ($product && (int)$item['product_id'] !== 999 && ($product['item_type'] ?? 'product') !== 'service') {
+                $stockBefore = (float) $product['current_stock'];
+                $quantitySold = (float) $item['quantity'];
                 $stockAfter = $stockBefore - $quantitySold;
 
                 // Update stock
@@ -236,15 +267,61 @@ function processSingleSale(PDO $pdo, array $saleData, string $deviceId): array {
                     ':after' => $stockAfter,
                     ':ref_type' => 'sale',
                     ':ref_id' => $saleId,
-                    ':notes' => "Sale #{$saleData['receipt_number']}",
+                    ':notes' => "Sale #{$receiptNumber}",
                 ]);
             }
         }
 
         // Automatically credit sold items to Daily Closing for this date (if draft exists)
         $saleDate = substr($saleData['sold_at'], 0, 10);
-        if ($saleDate !== '2026-10-19' && $saleDate !== '2026-10-20') {
-            creditSaleToDailyClosingDraft($pdo, $saleDate, $saleData['items']);
+        creditSaleToDailyClosingDraft($pdo, $saleDate, $saleData['items']);
+
+        // If sale was made to a customer on Utang / Credit, update customer balance and ledger
+        if ($customerId) {
+            $stmtMethod = $pdo->prepare('SELECT name FROM payment_methods WHERE id = :id');
+            $stmtMethod->execute([':id' => sanitizeInt($saleData['payment_method_id'])]);
+            $pMethodName = $stmtMethod->fetchColumn() ?: '';
+
+            if (stripos($pMethodName, 'utang') !== false || stripos($pMethodName, 'credit') !== false) {
+                $totalAmt = sanitizeDecimal($saleData['total_amount']);
+                $cashDown = isset($saleData['cash_tendered']) && (float)$saleData['cash_tendered'] > 0
+                    ? min($totalAmt, sanitizeDecimal($saleData['cash_tendered']))
+                    : 0;
+                $chargeAmt = max(0, $totalAmt - $cashDown);
+
+                if ($chargeAmt > 0) {
+                    $stmtCust = $pdo->prepare('SELECT current_balance FROM customers WHERE id = :id FOR UPDATE');
+                    $stmtCust->execute([':id' => $customerId]);
+                    $cBal = (float) $stmtCust->fetchColumn();
+                    $newBal = $cBal + $chargeAmt;
+
+                    $stmtUpCust = $pdo->prepare('UPDATE customers SET current_balance = :bal, updated_at = NOW() WHERE id = :id');
+                    $stmtUpCust->execute([':bal' => $newBal, ':id' => $customerId]);
+
+                    $noteText = sanitizeString($saleData['notes'] ?? '');
+                    if (!$noteText) {
+                        $noteText = $cashDown > 0
+                            ? sprintf('Benta sa POS - Split Payment (DP: ₱%.2f, Utang: ₱%.2f)', $cashDown, $chargeAmt)
+                            : 'Benta sa POS - Utang';
+                    }
+
+                    $stmtLedger = $pdo->prepare('
+                        INSERT INTO customer_ledger (uuid, customer_id, transaction_type, amount, balance_after, reference_type, reference_id, payment_method, notes, created_at)
+                        VALUES (UUID(), :cid, :type, :amt, :after, :reftype, :refid, :pmethod, :notes, :created)
+                    ');
+                    $stmtLedger->execute([
+                        ':cid' => $customerId,
+                        ':type' => 'CHARGE',
+                        ':amt' => $chargeAmt,
+                        ':after' => $newBal,
+                        ':reftype' => 'SALE',
+                        ':refid' => $receiptNumber,
+                        ':pmethod' => 'Utang / Credit',
+                        ':notes' => $noteText,
+                        ':created' => $saleData['sold_at'],
+                    ]);
+                }
+            }
         }
 
         $pdo->commit();
@@ -255,7 +332,7 @@ function processSingleSale(PDO $pdo, array $saleData, string $deviceId): array {
         return [
             'status' => 'synced',
             'uuid' => $saleData['uuid'],
-            'receipt_number' => $saleData['receipt_number'],
+            'receipt_number' => $receiptNumber,
             'server_id' => $saleId,
         ];
 
@@ -404,7 +481,7 @@ function syncProductsToDevice(PDO $pdo): void {
     $categories = $stmt->fetchAll();
 
     // Fetch products
-    $prodSql = 'SELECT p.*, c.name as category_name 
+    $prodSql = 'SELECT p.*, c.name as category_name, c.business_type as business_type 
                 FROM products p 
                 LEFT JOIN categories c ON p.category_id = c.id 
                 WHERE p.is_active = 1';
@@ -435,17 +512,19 @@ function syncProductsToDevice(PDO $pdo): void {
         $c['id'] = (int) $c['id'];
         $c['sort_order'] = (int) $c['sort_order'];
         $c['is_active'] = (bool) $c['is_active'];
+        $c['business_type'] = $c['business_type'] ?? 'groceries';
         return $c;
     }, $categories);
 
     $products = array_map(function ($p) {
         $p['id'] = (int) $p['id'];
         $p['category_id'] = (int) $p['category_id'];
+        $p['business_type'] = $p['business_type'] ?? 'groceries';
         $p['cost_price'] = (float) $p['cost_price'];
         $p['selling_price'] = (float) $p['selling_price'];
-        $p['current_stock'] = (int) $p['current_stock'];
-        $p['low_stock_threshold'] = (int) $p['low_stock_threshold'];
-        $p['target_stock'] = isset($p['target_stock']) ? (int) $p['target_stock'] : 20;
+        $p['current_stock'] = (float) $p['current_stock'];
+        $p['low_stock_threshold'] = (float) $p['low_stock_threshold'];
+        $p['target_stock'] = isset($p['target_stock']) ? (float) $p['target_stock'] : 20;
         $p['unit'] = $p['unit'] ?? 'sticks';
         $p['supplier_id'] = $p['supplier_id'] ?? null;
         $p['supplier_name'] = $p['supplier_name'] ?? null;
@@ -461,10 +540,22 @@ function syncProductsToDevice(PDO $pdo): void {
         return $pm;
     }, $paymentMethods);
 
+    // Fetch active customers
+    $stmt = $pdo->query('SELECT * FROM customers WHERE is_active = 1 ORDER BY name ASC');
+    $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $customers = array_map(function ($c) {
+        $c['id'] = (int) $c['id'];
+        $c['credit_limit'] = (float) $c['credit_limit'];
+        $c['current_balance'] = (float) $c['current_balance'];
+        $c['is_active'] = (bool) $c['is_active'];
+        return $c;
+    }, $customers);
+
     jsonResponse([
         'categories' => $categories,
         'products' => $products,
         'payment_methods' => $paymentMethods,
+        'customers' => $customers,
         'settings' => $settings,
         'server_time' => date('c'),
         'is_incremental' => $since !== null,
@@ -551,7 +642,7 @@ function syncMutationsFromDevice(PDO $pdo): void {
         $entity = $m['entity'] ?? '';
         $action = $m['action'] ?? '';
         $payload = $m['payload'] ?? [];
-        $entityId = isset($m['entityId']) ? (int) $m['entityId'] : null;
+        $entityId = isset($m['entityId']) ? (int) $m['entityId'] : (isset($payload['id']) && (int)$payload['id'] > 0 ? (int)$payload['id'] : null);
         $tempId = isset($m['tempId']) ? (int) $m['tempId'] : null;
 
         try {
@@ -615,11 +706,12 @@ function syncMutationsFromDevice(PDO $pdo): void {
                         $serverId = (int) $existing['id'];
                     } else {
                         $stmt = $pdo->prepare(
-                            'INSERT INTO categories (name, description, sort_order, is_active) 
-                             VALUES (:name, :description, :sort_order, 1)'
+                            'INSERT INTO categories (name, business_type, description, sort_order, is_active) 
+                             VALUES (:name, :business_type, :description, :sort_order, 1)'
                         );
                         $stmt->execute([
                             ':name' => $name,
+                            ':business_type' => sanitizeString($payload['business_type'] ?? 'groceries'),
                             ':description' => sanitizeString($payload['description'] ?? null),
                             ':sort_order' => sanitizeInt($payload['sort_order'] ?? 0),
                         ]);
@@ -639,11 +731,12 @@ function syncMutationsFromDevice(PDO $pdo): void {
                     ];
                 } elseif ($action === 'update' && $entityId) {
                     $stmt = $pdo->prepare(
-                        'UPDATE categories SET name = :name, description = :description, sort_order = :sort_order 
+                        'UPDATE categories SET name = :name, business_type = :business_type, description = :description, sort_order = :sort_order 
                          WHERE id = :id'
                     );
                     $stmt->execute([
                         ':name' => sanitizeString($payload['name'] ?? ''),
+                        ':business_type' => sanitizeString($payload['business_type'] ?? 'groceries'),
                         ':description' => sanitizeString($payload['description'] ?? null),
                         ':sort_order' => sanitizeInt($payload['sort_order'] ?? 0),
                         ':id' => $entityId,
@@ -717,37 +810,44 @@ function syncMutationsFromDevice(PDO $pdo): void {
                         'action' => $action,
                     ];
                 } elseif ($action === 'update' && $entityId) {
-                    $categoryId = sanitizeInt($payload['category_id'] ?? 0);
-                    if (isset($categoryTempMap[$categoryId])) {
-                        $categoryId = $categoryTempMap[$categoryId];
+                    $stmt = $pdo->prepare('SELECT * FROM products WHERE id = :id');
+                    $stmt->execute([':id' => $entityId]);
+                    $existing = $stmt->fetch();
+
+                    if ($existing) {
+                        $categoryId = isset($payload['category_id']) ? sanitizeInt($payload['category_id']) : (int) $existing['category_id'];
+                        if (isset($categoryTempMap[$categoryId])) {
+                            $categoryId = $categoryTempMap[$categoryId];
+                        }
+
+                        $stmt = $pdo->prepare(
+                            'UPDATE products SET 
+                                category_id = :cat, name = :name, sku = :sku, description = :desc, 
+                                cost_price = :cost, selling_price = :price, current_stock = :stock, 
+                                low_stock_threshold = :low, target_stock = :target_stock, unit = :unit,
+                                supplier_id = :supplier_id, supplier_name = :supplier_name, 
+                                reseller_price = :reseller_price, is_active = :active, updated_at = NOW()
+                             WHERE id = :id'
+                        );
+                        $stmt->execute([
+                            ':cat' => $categoryId,
+                            ':name' => sanitizeString($payload['name'] ?? $existing['name']),
+                            ':sku' => sanitizeString($payload['sku'] ?? $existing['sku']),
+                            ':desc' => sanitizeString($payload['description'] ?? $existing['description']),
+                            ':cost' => sanitizeDecimal($payload['cost_price'] ?? $existing['cost_price']),
+                            ':price' => sanitizeDecimal($payload['selling_price'] ?? $existing['selling_price']),
+                            ':stock' => sanitizeDecimal($payload['current_stock'] ?? $existing['current_stock']),
+                            ':low' => sanitizeDecimal($payload['low_stock_threshold'] ?? $existing['low_stock_threshold']),
+                            ':target_stock' => sanitizeDecimal($payload['target_stock'] ?? ($existing['target_stock'] ?? 20)),
+                            ':unit' => sanitizeString($payload['unit'] ?? ($existing['unit'] ?? 'sticks')),
+                            ':supplier_id' => sanitizeString($payload['supplier_id'] ?? $existing['supplier_id']),
+                            ':supplier_name' => sanitizeString($payload['supplier_name'] ?? $existing['supplier_name']),
+                            ':reseller_price' => isset($payload['reseller_price']) && $payload['reseller_price'] !== '' ? sanitizeDecimal($payload['reseller_price']) : (isset($existing['reseller_price']) ? $existing['reseller_price'] : null),
+                            ':active' => isset($payload['is_active']) ? (!empty($payload['is_active']) ? 1 : 0) : (int) $existing['is_active'],
+                            ':id' => $entityId,
+                        ]);
                     }
 
-                    $stmt = $pdo->prepare(
-                        'UPDATE products SET 
-                            category_id = :cat, name = :name, sku = :sku, description = :desc, 
-                            cost_price = :cost, selling_price = :price, current_stock = :stock, 
-                            low_stock_threshold = :low, target_stock = :target_stock, unit = :unit,
-                            supplier_id = :supplier_id, supplier_name = :supplier_name, 
-                            reseller_price = :reseller_price, is_active = :active 
-                         WHERE id = :id'
-                    );
-                    $stmt->execute([
-                        ':cat' => $categoryId,
-                        ':name' => sanitizeString($payload['name'] ?? ''),
-                        ':sku' => sanitizeString($payload['sku'] ?? ''),
-                        ':desc' => sanitizeString($payload['description'] ?? null),
-                        ':cost' => sanitizeDecimal($payload['cost_price'] ?? 0),
-                        ':price' => sanitizeDecimal($payload['selling_price'] ?? 0),
-                        ':stock' => sanitizeInt($payload['current_stock'] ?? 0),
-                        ':low' => sanitizeInt($payload['low_stock_threshold'] ?? 10),
-                        ':target_stock' => sanitizeInt($payload['target_stock'] ?? 20),
-                        ':unit' => sanitizeString($payload['unit'] ?? 'sticks'),
-                        ':supplier_id' => sanitizeString($payload['supplier_id'] ?? null),
-                        ':supplier_name' => sanitizeString($payload['supplier_name'] ?? null),
-                        ':reseller_price' => isset($payload['reseller_price']) && $payload['reseller_price'] !== '' ? sanitizeDecimal($payload['reseller_price']) : null,
-                        ':active' => !empty($payload['is_active']) ? 1 : 0,
-                        ':id' => $entityId,
-                    ]);
                     $results['processed'][] = [
                         'uuid' => $uuid,
                         'serverId' => $entityId,

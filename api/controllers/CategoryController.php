@@ -34,27 +34,39 @@ function handleCategories(string $method, ?string $id): void {
 function listCategories(PDO $pdo): void {
     $activeOnly = getQueryParam('active_only', '1');
     $withCounts = getQueryParam('with_counts', '0');
+    $businessType = sanitizeString(getQueryParam('business_type'));
 
-    $where = $activeOnly === '1' ? 'WHERE c.is_active = 1' : '';
+    $where = [];
+    $params = [];
+    if ($activeOnly === '1') {
+        $where[] = 'c.is_active = 1';
+    }
+    if ($businessType) {
+        $where[] = 'c.business_type = :business_type';
+        $params[':business_type'] = $businessType;
+    }
+    $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
     if ($withCounts === '1') {
         $sql = "SELECT c.*, COUNT(p.id) as product_count 
                 FROM categories c 
                 LEFT JOIN products p ON p.category_id = c.id AND p.is_active = 1 
-                $where 
+                $whereClause 
                 GROUP BY c.id 
                 ORDER BY c.sort_order ASC, c.name ASC";
     } else {
-        $sql = "SELECT c.* FROM categories c $where ORDER BY c.sort_order ASC, c.name ASC";
+        $sql = "SELECT c.* FROM categories c $whereClause ORDER BY c.sort_order ASC, c.name ASC";
     }
 
-    $stmt = $pdo->query($sql);
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
     $categories = $stmt->fetchAll();
 
     $categories = array_map(function ($c) {
         $c['id'] = (int) $c['id'];
         $c['sort_order'] = (int) $c['sort_order'];
         $c['is_active'] = (bool) $c['is_active'];
+        $c['business_type'] = $c['business_type'] ?? 'groceries';
         if (isset($c['product_count'])) {
             $c['product_count'] = (int) $c['product_count'];
         }
@@ -76,6 +88,7 @@ function getCategory(PDO $pdo, int $id): void {
     $category['id'] = (int) $category['id'];
     $category['sort_order'] = (int) $category['sort_order'];
     $category['is_active'] = (bool) $category['is_active'];
+    $category['business_type'] = $category['business_type'] ?? 'groceries';
 
     jsonResponse($category);
 }
@@ -95,12 +108,13 @@ function createCategory(PDO $pdo): void {
     }
 
     $stmt = $pdo->prepare(
-        'INSERT INTO categories (name, description, sort_order, is_active) 
-         VALUES (:name, :description, :sort_order, :active)'
+        'INSERT INTO categories (name, business_type, description, sort_order, is_active) 
+         VALUES (:name, :business_type, :description, :sort_order, :active)'
     );
 
     $stmt->execute([
         ':name' => sanitizeString($data['name']),
+        ':business_type' => sanitizeString($data['business_type'] ?? 'groceries'),
         ':description' => sanitizeString($data['description'] ?? null),
         ':sort_order' => sanitizeInt($data['sort_order'] ?? 0),
         ':active' => isset($data['is_active']) ? (int) $data['is_active'] : 1,
@@ -130,11 +144,12 @@ function updateCategory(PDO $pdo, int $id): void {
     }
 
     $stmt = $pdo->prepare(
-        'UPDATE categories SET name = :name, description = :description, sort_order = :sort_order, is_active = :active WHERE id = :id'
+        'UPDATE categories SET name = :name, business_type = :business_type, description = :description, sort_order = :sort_order, is_active = :active WHERE id = :id'
     );
 
     $stmt->execute([
         ':name' => sanitizeString($data['name'] ?? $existing['name']),
+        ':business_type' => sanitizeString($data['business_type'] ?? ($existing['business_type'] ?? 'groceries')),
         ':description' => sanitizeString($data['description'] ?? $existing['description']),
         ':sort_order' => sanitizeInt($data['sort_order'] ?? $existing['sort_order']),
         ':active' => isset($data['is_active']) ? (int) $data['is_active'] : (int) $existing['is_active'],

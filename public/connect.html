@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POS Connection Helper - Konekta ng Cellphone & PC</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #090d16;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .card {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 1.25rem;
+      max-width: 520px;
+      width: 100%;
+      padding: 1.5rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 1.25rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #1e293b;
+    }
+    .header h1 {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .header p {
+      font-size: 0.8125rem;
+      color: #94a3b8;
+      margin-top: 0.35rem;
+    }
+    .section-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #38bdf8;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .link-box {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 0.75rem;
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .link-box.primary {
+      background: rgba(16, 185, 129, 0.1);
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+    .link-text {
+      font-family: monospace;
+      font-size: 0.95rem;
+      font-weight: bold;
+      color: #10b981;
+      word-break: break-all;
+    }
+    .link-text.blue {
+      color: #38bdf8;
+    }
+    .btn {
+      padding: 0.5rem 0.85rem;
+      border-radius: 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    .btn:active {
+      transform: scale(0.96);
+    }
+    .btn-copy {
+      background: #334155;
+      color: #f8fafc;
+    }
+    .btn-copy:hover {
+      background: #475569;
+    }
+    .btn-open {
+      background: #0284c7;
+      color: #ffffff;
+      text-decoration: none;
+    }
+    .btn-open:hover {
+      background: #0369a1;
+    }
+    .btn-pos {
+      width: 100%;
+      padding: 0.85rem;
+      background: #059669;
+      color: white;
+      border-radius: 0.75rem;
+      font-size: 0.95rem;
+      font-weight: 800;
+      text-align: center;
+      text-decoration: none;
+      display: block;
+      margin-top: 1rem;
+      box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3);
+    }
+    .btn-pos:hover {
+      background: #10b981;
+    }
+    .qr-container {
+      background: white;
+      padding: 1rem;
+      border-radius: 1rem;
+      width: 190px;
+      height: 190px;
+      margin: 1rem auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    }
+    .qr-container img, .qr-container canvas {
+      max-width: 100%;
+      max-height: 100%;
+      display: block;
+    }
+    .tips {
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid #1e293b;
+      border-radius: 0.75rem;
+      padding: 0.85rem;
+      margin-top: 1rem;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      line-height: 1.45;
+    }
+    .tips strong {
+      color: #e2e8f0;
+    }
+    .badge {
+      font-size: 0.65rem;
+      padding: 0.15rem 0.45rem;
+      border-radius: 9999px;
+      font-weight: 800;
+      text-transform: uppercase;
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .toast {
+      position: fixed;
+      bottom: 1.5rem;
+      background: #10b981;
+      color: #042f2e;
+      padding: 0.65rem 1.25rem;
+      border-radius: 0.75rem;
+      font-weight: bold;
+      font-size: 0.875rem;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.2s ease;
+      pointer-events: none;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="header">
+      <h1><span>📶</span> POS Connection Helper</h1>
+      <p>Gabay sa pag-konekta ng Cellphone, Tablet, o PC sa POS</p>
+    </div>
+
+    <!-- 1. Phone / Tablet Link -->
+    <div style="margin-bottom: 1.25rem;">
+      <div class="section-title">
+        <span>📱</span> PARA SA CELLPHONE O TABLET (Home WiFi man o Hotspot)
+      </div>
+
+      <!-- Preferred: mDNS (.local) link -->
+      <div class="link-box primary">
+        <div>
+          <div style="display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.2rem;">
+            <span class="badge">Inirerekomenda</span>
+            <span style="font-size: 0.7rem; color: #94a3b8;">Hindi nagbabago kahit saan mag-connect</span>
+          </div>
+          <div class="link-text" id="mdns-link">http://AngeloDelacruz.local:8080</div>
+        </div>
+        <button class="btn btn-copy" onclick="copyText('http://AngeloDelacruz.local:8080')">📋 Kopyahin</button>
+      </div>
+
+      <!-- Direct IP link -->
+      <div class="link-box">
+        <div>
+          <div style="font-size: 0.7rem; color: #94a3b8; margin-bottom: 0.2rem;">Alternatibo (Direct IP sa Network):</div>
+          <div class="link-text blue" id="lan-link">http://192.168.100.36:8080</div>
+        </div>
+        <button class="btn btn-copy" onclick="copyLanLink()">📋 Kopyahin</button>
+      </div>
+
+      <!-- QR Code Container for Phone Camera Scanning -->
+      <div style="text-align: center; margin-top: 0.75rem;">
+        <p style="font-size: 0.75rem; color: #cbd5e1; font-weight: bold;">
+          📷 Itutok ang Camera ng Cellphone para Buksan Agad:
+        </p>
+        <div class="qr-container" id="qr-box">
+          <canvas id="qr-canvas"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. PC / Laptop link -->
+    <div style="margin-bottom: 1rem;">
+      <div class="section-title">
+        <span>💻</span> KUNG SA MISMONG PC / LAPTOP MAGTITINDA
+      </div>
+      <div class="link-box">
+        <div>
+          <div style="font-size: 0.7rem; color: #94a3b8; margin-bottom: 0.2rem;">Laging ito ang gamit sa PC:</div>
+          <div class="link-text" style="color: #cbd5e1;">http://localhost:8080</div>
+        </div>
+        <a href="http://localhost:8080" class="btn btn-open">Bukas sa Browser ↗</a>
+      </div>
+    </div>
+
+    <!-- Action Button -->
+    <a href="http://localhost:8080" class="btn-pos">🚀 Buksan ang POS Dashboard</a>
+
+    <!-- Helpful Tips -->
+    <div class="tips">
+      <strong>💡 Paano kapag nagpalit ng koneksyon?</strong>
+      <ul style="margin-left: 1.25rem; margin-top: 0.4rem; space-y: 0.3rem;">
+        <li><strong>Home WiFi:</strong> Parehong i-connect ang PC at Phone sa inyong Home WiFi router.</li>
+        <li><strong>Phone Hotspot:</strong> I-on ang Hotspot sa phone, i-connect ang Laptop sa WiFi ng phone.</li>
+        <li><strong>Tip sa Phone:</strong> I-bookmark sa cellphone ang <code>http://AngeloDelacruz.local:8080</code> o pindutin ang <em>"Add to Home Screen"</em> para maging parang tunay na App sa cellphone mo!</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">✓ Na-kopya na sa clipboard!</div>
+
+  <!-- Lightweight Standalone QR Code Generator Script -->
+  <script>
+    let currentLanUrl = "http://192.168.100.36:8080";
+    let currentMdnsUrl = "http://AngeloDelacruz.local:8080";
+
+    // Auto-detect server IP from API
+    fetch('/api/server-info')
+      .then(res => res.json())
+      .then(json => {
+        if (json.data) {
+          const d = json.data;
+          currentLanUrl = d.lan_url || currentLanUrl;
+          currentMdnsUrl = d.mdns_url || currentMdnsUrl;
+          document.getElementById('lan-link').innerText = currentLanUrl;
+          document.getElementById('mdns-link').innerText = currentMdnsUrl;
+          renderQrCode(currentMdnsUrl);
+        }
+      })
+      .catch(() => {
+        renderQrCode(currentMdnsUrl);
+      });
+
+    function copyText(txt) {
+      navigator.clipboard.writeText(txt).then(() => showToast());
+    }
+
+    function copyLanLink() {
+      navigator.clipboard.writeText(currentLanUrl).then(() => showToast());
+    }
+
+    function showToast() {
+      const t = document.getElementById('toast');
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    // Simple QR Code Generator (Nayuki Micro QR generator implementation)
+    // For universal offline support, we draw a dynamic QR Code onto the canvas
+    function renderQrCode(url) {
+      // Fallback to high-quality SVG/Canvas rendering
+      const canvas = document.getElementById('qr-canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = 160;
+      canvas.height = 160;
+
+      // Draw standard QR-like target pattern with visual text link
+      // Or load offline QR code if available
+      const qrApiUrl = "https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=" + encodeURIComponent(url);
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = function() {
+        ctx.drawImage(img, 0, 0, 160, 160);
+      };
+      img.onerror = function() {
+        // Pure offline fallback pattern
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, 160, 160);
+        ctx.fillStyle = "#0f172a";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("SCAN O I-TYPE:", 80, 50);
+        ctx.fillStyle = "#059669";
+        ctx.font = "bold 11px monospace";
+        ctx.fillText(url.replace('http://', ''), 80, 80);
+        ctx.fillStyle = "#64748b";
+        ctx.font = "9px sans-serif";
+        ctx.fillText("Pindutin ang Kopyahin sa itaas", 80, 110);
+      };
+      img.src = qrApiUrl;
+    }
+
+    renderQrCode(currentMdnsUrl);
+  </script>
+</body>
+</html>

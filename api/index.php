@@ -29,6 +29,11 @@ enforceLocalNetwork();
 
 // Parse the request - multiple strategies for compatibility
 $method = $_SERVER['REQUEST_METHOD'];
+if ($method === 'POST' && !empty($_SERVER['HTTP_X_HTTP_METHOD_OVERRIDE'])) {
+    $method = strtoupper($_SERVER['HTTP_X_HTTP_METHOD_OVERRIDE']);
+} elseif (!empty($_GET['_method'])) {
+    $method = strtoupper($_GET['_method']);
+}
 $resource = '';
 $id = null;
 $action = null;
@@ -87,7 +92,7 @@ switch ($resource) {
 
     case 'sales':
         require_once __DIR__ . '/controllers/SaleController.php';
-        handleSales($method, $id);
+        handleSales($method, $id, $action);
         break;
 
     case 'inventory':
@@ -98,6 +103,11 @@ switch ($resource) {
     case 'expenses':
         require_once __DIR__ . '/controllers/ExpenseController.php';
         handleExpenses($method, $id);
+        break;
+
+    case 'customers':
+        require_once __DIR__ . '/controllers/CustomerController.php';
+        handleCustomers($method, $id, $action);
         break;
 
     case 'daily-closings':
@@ -151,6 +161,19 @@ switch ($resource) {
             'timestamp' => date('c'),
             'server' => 'OFFLINE-POS API',
             'php_version' => PHP_VERSION,
+        ]);
+    case 'server-info':
+        $hostname = gethostname();
+        $ip = gethostbyname($hostname);
+        $port = 8080;
+        jsonResponse([
+            'status' => 'ok',
+            'hostname' => $hostname,
+            'ip' => $ip,
+            'port' => $port,
+            'local_url' => "http://localhost:{$port}",
+            'lan_url' => "http://{$ip}:{$port}",
+            'mdns_url' => "http://{$hostname}.local:{$port}"
         ]);
         break;
 

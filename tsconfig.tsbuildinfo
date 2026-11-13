@@ -1,0 +1,1 @@
+{"root":["./prisma/migrate.ts","./prisma/seed.ts"],"version":"5.9.3"}

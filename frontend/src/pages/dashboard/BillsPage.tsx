@@ -413,23 +413,31 @@ export function BillsPage() {
       {/* ============================================================== */}
       {activeTab === 'bills' && (
         <>
-          {/* KPI Summary Cards */}
+          {/* Bilingual KPI Summary Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 sm:gap-2.5 flex-shrink-0">
-            <div className="p-2 sm:p-3 rounded-xl bg-surface-900/90 border border-surface-700/60 shadow-sm min-w-0 flex flex-col justify-between">
-              <span className="text-[9px] sm:text-xs text-surface-400 font-semibold uppercase tracking-wider truncate">Monthly Target</span>
-              <p className="text-xs sm:text-lg font-extrabold text-surface-100 mt-0.5 truncate">
+            <div className="p-2 sm:p-2.5 rounded-xl bg-surface-900/90 border border-surface-700/60 shadow-sm min-w-0 flex flex-col justify-between">
+              <div>
+                <span className="text-[9px] sm:text-xs text-surface-400 font-bold uppercase tracking-wider truncate block">Monthly Target</span>
+                <span className="text-[9px] text-surface-500 font-medium block -mt-0.5 truncate">Kabuuang Target</span>
+              </div>
+              <p className="text-xs sm:text-base lg:text-lg font-extrabold text-surface-100 mt-1 truncate">
                 {formatCurrency(billsSummary.totalTarget)}
               </p>
-              <span className="text-[9px] sm:text-[11px] text-surface-500 mt-0.5 truncate">{bills.length} active bills</span>
+              <span className="text-[9px] sm:text-[10px] text-surface-500 mt-0.5 truncate">{bills.length} active bills</span>
             </div>
 
-            <div className="p-2 sm:p-3 rounded-xl bg-surface-900/90 border border-surface-700/60 shadow-sm min-w-0 flex flex-col justify-between">
-              <span className="text-[9px] sm:text-xs text-surface-400 font-semibold uppercase tracking-wider truncate">Total Naipon</span>
-              <div className="flex items-baseline justify-between mt-0.5">
-                <span className="text-xs sm:text-lg font-extrabold text-emerald-400 truncate">
+            <div className="p-2 sm:p-2.5 rounded-xl bg-surface-900/90 border border-surface-700/60 shadow-sm min-w-0 flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[9px] sm:text-xs text-surface-400 font-bold uppercase tracking-wider truncate block">Total Collected</span>
+                  <span className="text-[9px] text-surface-500 font-medium block -mt-0.5 truncate">Kabuuang Naipon</span>
+                </div>
+                <span className="text-[9px] sm:text-[10px] text-emerald-400 font-bold ml-1">{billsSummary.progressPercent}%</span>
+              </div>
+              <div className="flex items-baseline justify-between mt-1">
+                <span className="text-xs sm:text-base lg:text-lg font-extrabold text-emerald-400 truncate">
                   {formatCurrency(billsSummary.totalCollected)}
                 </span>
-                <span className="text-[9px] sm:text-[10px] text-emerald-400 font-bold ml-1">{billsSummary.progressPercent}%</span>
               </div>
               <div className="bg-surface-800 rounded-full h-1 overflow-hidden mt-1">
                 <div
@@ -439,21 +447,27 @@ export function BillsPage() {
               </div>
             </div>
 
-            <div className="p-2 sm:p-3 rounded-xl bg-surface-900/90 border border-surface-700/60 shadow-sm min-w-0 flex flex-col justify-between">
-              <span className="text-[9px] sm:text-xs text-surface-400 font-semibold uppercase tracking-wider truncate">Kulang Pa</span>
-              <p className="text-xs sm:text-lg font-extrabold text-amber-400 mt-0.5 truncate">
+            <div className="p-2 sm:p-2.5 rounded-xl bg-surface-900/90 border border-surface-700/60 shadow-sm min-w-0 flex flex-col justify-between">
+              <div>
+                <span className="text-[9px] sm:text-xs text-surface-400 font-bold uppercase tracking-wider truncate block">Remaining Balance</span>
+                <span className="text-[9px] text-surface-500 font-medium block -mt-0.5 truncate">Kulang Pa</span>
+              </div>
+              <p className="text-xs sm:text-base lg:text-lg font-extrabold text-amber-400 mt-1 truncate">
                 {formatCurrency(billsSummary.remaining)}
               </p>
-              <span className="text-[9px] sm:text-[11px] text-surface-500 mt-0.5 truncate">Naiwan bago mag-due</span>
+              <span className="text-[9px] sm:text-[10px] text-surface-500 mt-0.5 truncate">Naiwan bago mag-due</span>
             </div>
 
-            <div className="p-2 sm:p-3 rounded-xl bg-primary-950/40 border border-primary-500/30 shadow-sm min-w-0 flex flex-col justify-between">
-              <span className="text-[9px] sm:text-xs text-primary-300 font-semibold uppercase tracking-wider truncate">Daily Sinking</span>
-              <p className="text-xs sm:text-lg font-black text-primary-400 mt-0.5 truncate">
+            <div className="p-2 sm:p-2.5 rounded-xl bg-primary-950/40 border border-primary-500/30 shadow-sm min-w-0 flex flex-col justify-between">
+              <div>
+                <span className="text-[9px] sm:text-xs text-primary-300 font-bold uppercase tracking-wider truncate block">Daily Sinking Target</span>
+                <span className="text-[9px] text-primary-400/80 font-medium block -mt-0.5 truncate">Araw-araw na Hulog</span>
+              </div>
+              <p className="text-xs sm:text-base lg:text-lg font-black text-primary-400 mt-1 truncate">
                 {formatCurrency(billsSummary.dailyTargetTotal)}
-                <span className="text-[10px] sm:text-xs font-normal text-primary-300/80"> /araw</span>
+                <span className="text-[10px] sm:text-xs font-normal text-primary-300/80"> /day</span>
               </p>
-              <span className="text-[9px] sm:text-[11px] text-primary-400/70 mt-0.5 truncate">Itatabi araw-araw</span>
+              <span className="text-[9px] sm:text-[10px] text-primary-400/70 mt-0.5 truncate">Itatabi araw-araw</span>
             </div>
           </div>
 

@@ -240,12 +240,12 @@ function getDashboardSummary(PDO $pdo): void {
 
     // Low stock count
     $stmt = $pdo->query(
-        'SELECT COUNT(*) FROM products WHERE is_active = 1 AND current_stock <= low_stock_threshold'
+        'SELECT COUNT(*) FROM products WHERE is_active = 1 AND id != 999 AND (item_type IS NULL OR item_type != \'service\') AND current_stock <= low_stock_threshold'
     );
     $lowStockCount = (int) $stmt->fetchColumn();
 
-    // Total products
-    $stmt = $pdo->query('SELECT COUNT(*) FROM products WHERE is_active = 1');
+    // Total products (excluding custom open item)
+    $stmt = $pdo->query('SELECT COUNT(*) FROM products WHERE is_active = 1 AND id != 999');
     $totalProducts = (int) $stmt->fetchColumn();
 
     // Pending sync failures

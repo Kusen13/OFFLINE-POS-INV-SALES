@@ -3,7 +3,7 @@
  */
 
 import { api } from './client';
-import type { Product, Category, ProductFormData, ItemType } from '../types/product';
+import type { Product, Category, ProductFormData, ItemType, BusinessType } from '../types/product';
 import type { ApiResponse, PaginatedResponse } from '../types/common';
 import type { PaymentMethod } from '../types/sale';
 
@@ -17,6 +17,7 @@ export async function fetchProducts(params?: {
   search?: string;
   category_id?: number;
   item_type?: ItemType;
+  business_type?: BusinessType;
 }): Promise<PaginatedResponse<Product>> {
   const searchParams = new URLSearchParams();
   if (params?.page) searchParams.set('page', String(params.page));
@@ -24,6 +25,7 @@ export async function fetchProducts(params?: {
   if (params?.search) searchParams.set('search', params.search);
   if (params?.category_id) searchParams.set('category_id', String(params.category_id));
   if (params?.item_type) searchParams.set('item_type', params.item_type);
+  if (params?.business_type) searchParams.set('business_type', params.business_type);
   const qs = searchParams.toString();
   return api.get<PaginatedResponse<Product>>(`/products${qs ? '?' + qs : ''}`);
 }
@@ -52,15 +54,19 @@ export async function fetchLowStockProducts(): Promise<ApiResponse<Product[]>> {
 // Categories
 // ============================================================
 
-export async function fetchCategories(withCounts = false): Promise<ApiResponse<Category[]>> {
-  return api.get<ApiResponse<Category[]>>(`/categories${withCounts ? '?with_counts=1' : ''}`);
+export async function fetchCategories(withCounts = false, businessType?: BusinessType): Promise<ApiResponse<Category[]>> {
+  const params = new URLSearchParams();
+  if (withCounts) params.set('with_counts', '1');
+  if (businessType) params.set('business_type', businessType);
+  const qs = params.toString();
+  return api.get<ApiResponse<Category[]>>(`/categories${qs ? '?' + qs : ''}`);
 }
 
-export async function createCategory(data: { name: string; description?: string; sort_order?: number }): Promise<ApiResponse<Category>> {
+export async function createCategory(data: { name: string; business_type?: BusinessType; description?: string; sort_order?: number }): Promise<ApiResponse<Category>> {
   return api.post<ApiResponse<Category>>('/categories', data);
 }
 
-export async function updateCategory(id: number, data: Partial<{ name: string; description: string; sort_order: number; is_active: boolean }>): Promise<ApiResponse<Category>> {
+export async function updateCategory(id: number, data: Partial<{ name: string; business_type: BusinessType; description: string; sort_order: number; is_active: boolean }>): Promise<ApiResponse<Category>> {
   return api.put<ApiResponse<Category>>(`/categories/${id}`, data);
 }
 
@@ -101,6 +107,10 @@ export async function fetchSales(params?: {
 
 export async function fetchSaleDetail(id: number): Promise<ApiResponse<import('../types/sale').Sale>> {
   return api.get(`/sales/${id}`);
+}
+
+export async function voidSale(idOrUuid: number | string): Promise<ApiResponse<{ message: string; receipt_number: string }>> {
+  return api.delete(`/sales/${idOrUuid}`);
 }
 
 // ============================================================

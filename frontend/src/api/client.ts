@@ -9,8 +9,8 @@
 import { generateUUID } from '../utils/uuid';
 
 const API_BASE = '/api';
-const DEFAULT_GET_TIMEOUT = 3500; // 3.5s for GET queries so offline fallback is fast
-const DEFAULT_POST_TIMEOUT = 12000; // 12s for writes/batch operations
+const DEFAULT_GET_TIMEOUT = 8000; // 8s for GET queries (tolerant to Wi-Fi jitter before falling back to offline)
+const DEFAULT_POST_TIMEOUT = 15000; // 15s for writes/batch operations
 
 export class ApiError extends Error {
   status: number;

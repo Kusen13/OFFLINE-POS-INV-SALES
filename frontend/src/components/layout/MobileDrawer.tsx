@@ -5,6 +5,7 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { SyncStatusBar } from '../SyncStatusBar';
 import { NAV_ITEMS } from './navItems';
+import { useStoreProfile } from '../../hooks/useStoreProfile';
 
 export interface MobileDrawerProps {
   isOpen: boolean;
@@ -13,6 +14,7 @@ export interface MobileDrawerProps {
 
 export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
   const location = useLocation();
+  const { storeName, storeSubtitle, storeLogo } = useStoreProfile();
 
   if (!isOpen) return null;
 
@@ -29,13 +31,21 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
       <aside className="fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-surface-900 border-r border-surface-700/60 shadow-2xl flex flex-col z-50 animate-slide-right">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-surface-700/50">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-primary-600/30">
-              P
-            </div>
-            <div>
-              <h2 className="text-sm font-bold text-surface-50">POS & Inventory</h2>
-              <p className="text-xs text-surface-400">Cafeteria System</p>
+          <div className="flex items-center gap-3 min-w-0">
+            {storeLogo ? (
+              <img
+                src={storeLogo}
+                alt={storeName}
+                className="w-9 h-9 rounded-xl object-cover border border-surface-700/80 shrink-0 shadow-xs"
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-xl bg-primary-600 border border-primary-500/40 flex items-center justify-center text-white font-black text-base shadow-xs shrink-0">
+                {storeName ? storeName.charAt(0).toUpperCase() : 'P'}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-bold text-surface-50 truncate leading-snug">{storeName}</h2>
+              <p className="text-[11px] text-surface-400 truncate leading-none mt-0.5">{storeSubtitle}</p>
             </div>
           </div>
           <button

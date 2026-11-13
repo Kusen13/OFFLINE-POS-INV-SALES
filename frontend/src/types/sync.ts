@@ -29,6 +29,7 @@ export interface SyncProductsResponse {
   categories: import('./product').Category[];
   products: import('./product').Product[];
   payment_methods: import('./sale').PaymentMethod[];
+  customers?: import('./customer').Customer[];
   settings: Record<string, string>;
   server_time: string;
   is_incremental: boolean;

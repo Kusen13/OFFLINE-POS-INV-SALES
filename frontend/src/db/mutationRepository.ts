@@ -105,3 +105,17 @@ export async function clearFailedMutations(): Promise<number> {
   await tx.done;
   return failed.length;
 }
+
+/**
+ * Clear all mutations from queue
+ */
+export async function clearAllMutations(): Promise<number> {
+  const db = await getDB();
+  const all = await db.getAll('pendingMutations');
+  const tx = db.transaction('pendingMutations', 'readwrite');
+  for (const m of all) {
+    await tx.store.delete(m.id);
+  }
+  await tx.done;
+  return all.length;
+}

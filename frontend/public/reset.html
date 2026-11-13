@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Ina-update ang POS System...</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 24px;
+      text-align: center;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 24px;
+      padding: 32px 24px;
+      max-width: 380px;
+      width: 100%;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    .spinner {
+      width: 56px;
+      height: 56px;
+      border: 5px solid #334155;
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 24px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h2 { margin: 0 0 12px; font-size: 20px; font-weight: 800; color: #38bdf8; }
+    p { margin: 0 0 20px; font-size: 14px; color: #94a3b8; line-height: 1.5; }
+    .badge {
+      display: inline-block;
+      background: #0284c7;
+      color: white;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .btn {
+      display: none;
+      margin-top: 16px;
+      background: #38bdf8;
+      color: #0f172a;
+      font-weight: 800;
+      padding: 12px 24px;
+      border-radius: 12px;
+      text-decoration: none;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner" id="spinner"></div>
+    <h2>Ina-update ang POS System</h2>
+    <p id="status">Binubura ang lumang cache ng browser at kinukuha ang pinakabagong bersyon...</p>
+    <div class="badge" id="step">Hakbang 1 ng 3: PWA Flush</div>
+    <a href="/" class="btn" id="retryBtn">I-tap dito para Buksan ang POS</a>
+  </div>
+
+  <script>
+    async function resetPhonePWA() {
+      const statusEl = document.getElementById('status');
+      const stepEl = document.getElementById('step');
+      const spinner = document.getElementById('spinner');
+      const retryBtn = document.getElementById('retryBtn');
+
+      try {
+        // Step 1: Unregister all service workers
+        stepEl.innerText = 'Hakbang 1: Pag-alis ng lumang worker...';
+        if ('serviceWorker' in navigator) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          for (const reg of registrations) {
+            await reg.unregister();
+          }
+        }
+
+        // Step 2: Wipe all CacheStorage
+        stepEl.innerText = 'Hakbang 2: Pagbura ng lumang cache...';
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          for (const key of keys) {
+            await caches.delete(key);
+          }
+        }
+
+        // Step 3: Clear session storage
+        stepEl.innerText = 'Hakbang 3: Pag-refresh...';
+        try { sessionStorage.clear(); } catch (_) {}
+
+        statusEl.innerText = '✓ Tagumpay! Na-update na ang buong system. Binubuksan na ang bagong POS...';
+        stepEl.innerText = 'Handa na!';
+        stepEl.style.background = '#10b981';
+
+        setTimeout(() => {
+          window.location.replace('/?v=' + Date.now());
+        }, 800);
+      } catch (err) {
+        spinner.style.display = 'none';
+        statusEl.innerText = 'May kaunting aberya: ' + err.message;
+        retryBtn.style.display = 'inline-block';
+      }
+    }
+
+    resetPhonePWA();
+  </script>
+</body>
+</html>

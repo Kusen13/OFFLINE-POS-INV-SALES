@@ -7,9 +7,14 @@
     "doc": "docs"
   },
   "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "preview": "npm --prefix frontend run preview",
+    "start": "npm --prefix frontend run preview",
+    "build": "npm --prefix frontend run build",
     "studio": "prisma studio",
     "db:pull": "prisma db pull",
     "db:generate": "prisma generate",
+    "db:seed": "ts-node prisma/seed.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -26,6 +31,12 @@
   "homepage": "https://github.com/Kusen13/OFFLINE-POS-INV-SALES#readme",
   "devDependencies": {
     "@prisma/client": "^5.22.0",
-    "prisma": "^5.22.0"
+    "prisma": "^5.22.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
   }
 }

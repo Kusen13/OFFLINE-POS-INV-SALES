@@ -277,16 +277,136 @@ textarea.form-input {
 }
 
 /* ============================================================
-   Print Styles (for receipts)
+/* ============================================================
+   Print Styles (for 58mm / 80mm POS Thermal Receipts & Barcode Sheets)
    ============================================================ */
 
 @media print {
+  @page {
+    margin: 5mm;
+  }
+
+  /* Hide everything on the page by default */
   body {
-    background: white;
-    color: black;
+    background: white !important;
+    color: black !important;
+    font-size: 11px !important;
+    line-height: 1.25 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    visibility: hidden !important;
+  }
+
+  html, body {
+    overflow: visible !important;
+    height: auto !important;
   }
   
-  .no-print {
+  /* Hide navigation, headers, footers, and interactive buttons */
+  aside, nav, header, button, .no-print {
     display: none !important;
+  }
+
+  /* Isolate and display only the thermal receipt */
+  #thermal-receipt,
+  #thermal-receipt * {
+    visibility: visible !important;
+  }
+
+  #thermal-receipt {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 58mm !important;
+    max-width: 58mm !important;
+    margin: 0 auto !important;
+    padding: 2mm 3mm !important;
+    background: white !important;
+    color: black !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  #thermal-receipt.thermal-80mm {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    padding: 3mm 4mm !important;
+  }
+
+  #thermal-receipt * {
+    color: black !important;
+    background: transparent !important;
+    border-color: #333 !important;
+    font-size: 11px !important;
+  }
+
+  #thermal-receipt h2, #thermal-receipt .text-lg, #thermal-receipt .text-xl {
+    font-size: 13px !important;
+    font-weight: bold !important;
+  }
+
+  /* ==========================================
+     Barcode & Price Tag Printable Sheet
+     ========================================== */
+  body.barcode-print-active #root,
+  body:has(#barcode-print-sheet) #root {
+    display: none !important;
+  }
+
+  body.barcode-print-active,
+  body:has(#barcode-print-sheet) {
+    visibility: visible !important;
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  body.barcode-print-active #barcode-print-sheet,
+  body.barcode-print-active #barcode-print-sheet *,
+  body:has(#barcode-print-sheet) #barcode-print-sheet,
+  body:has(#barcode-print-sheet) #barcode-print-sheet * {
+    visibility: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body.barcode-print-active #barcode-print-sheet,
+  body:has(#barcode-print-sheet) #barcode-print-sheet {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  #barcode-print-sheet .barcode-tag {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  #barcode-print-sheet svg {
+    display: block !important;
+    max-width: 100% !important;
+    height: auto !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #barcode-print-sheet svg rect {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }

@@ -35,7 +35,7 @@ function listInventory(PDO $pdo): void {
     $lowStockOnly = getQueryParam('low_stock_only', '0');
     $search = sanitizeString(getQueryParam('search'));
 
-    $where = ['p.is_active = 1'];
+    $where = ['p.is_active = 1', 'p.id != 999', "(p.item_type IS NULL OR p.item_type != 'service')"];
     $params = [];
 
     if ($lowStockOnly === '1') {

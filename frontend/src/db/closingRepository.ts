@@ -28,17 +28,17 @@ export const HISTORICAL_CLOSINGS: Record<string, DailyClosing> = {
     created_at: '2026-10-19T22:00:00.000Z',
     finalized_at: '2026-10-19T22:00:00.000Z',
     items: [
-      { product_id: 31, product_name: 'Pork BBQ', sku: 'BBQ-00003', unit_cost: 15, selling_price: 25, prev_stock: 5, received_qty: 26, prepared_qty: 31, sold_qty: 12, unsold_qty: 19, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 300, cogs: 180, gross_profit: 120 },
-      { product_id: 32, product_name: 'Isaw Manok', sku: 'BBQ-00004', unit_cost: 8, selling_price: 15, prev_stock: 0, received_qty: 30, prepared_qty: 30, sold_qty: 25, unsold_qty: 5, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 375, cogs: 200, gross_profit: 175 },
-      { product_id: 33, product_name: 'Dugo', sku: 'BBQ-00005', unit_cost: 8, selling_price: 15, prev_stock: 0, received_qty: 10, prepared_qty: 10, sold_qty: 10, unsold_qty: 0, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 150, cogs: 80, gross_profit: 70 },
-      { product_id: 35, product_name: 'Bituka/Tumbong', sku: 'BBQ-00007', unit_cost: 15, selling_price: 20, prev_stock: 0, received_qty: 15, prepared_qty: 15, sold_qty: 15, unsold_qty: 0, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 300, cogs: 225, gross_profit: 75 },
-      { product_id: 36, product_name: 'Paa', sku: 'BBQ-00008', unit_cost: 10, selling_price: 20, prev_stock: 0, received_qty: 10, prepared_qty: 10, sold_qty: 5, unsold_qty: 5, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 100, cogs: 50, gross_profit: 50 },
-      { product_id: 37, product_name: 'Tenga', sku: 'BBQ-00009', unit_cost: 14, selling_price: 20, prev_stock: 0, received_qty: 15, prepared_qty: 15, sold_qty: 9, unsold_qty: 6, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 180, cogs: 126, gross_profit: 54 },
-      { product_id: 38, product_name: 'Hotdog', sku: 'BBQ-00010', unit_cost: 9, selling_price: 20, prev_stock: 3, received_qty: 17, prepared_qty: 20, sold_qty: 12, unsold_qty: 8, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 240, cogs: 108, gross_profit: 132 },
-      { product_id: 39, product_name: 'Bulaklak', sku: 'BBQ-00011', unit_cost: 16, selling_price: 25, prev_stock: 0, received_qty: 15, prepared_qty: 15, sold_qty: 2, unsold_qty: 12, spoilage_qty: 1, discrepancy: 0, spoilage_loss: 25, actual_revenue: 50, cogs: 32, gross_profit: 18 },
-      { product_id: 40, product_name: 'Leeg', sku: 'BBQ-00012', unit_cost: 13, selling_price: 20, prev_stock: 0, received_qty: 10, prepared_qty: 10, sold_qty: 0, unsold_qty: 10, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 42, product_name: 'Atay', sku: 'BBQ-00014', unit_cost: 14, selling_price: 20, prev_stock: 0, received_qty: 0, prepared_qty: 0, sold_qty: 0, unsold_qty: 0, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 43, product_name: 'Suka', sku: 'BBQ-00015', unit_cost: 50, selling_price: 0, prev_stock: 0, received_qty: 0, prepared_qty: 1, sold_qty: 0, unsold_qty: 1, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
+      { product_id: 31, product_name: 'Pork BBQ', sku: 'BBQ-00003', unit_cost: 15, selling_price: 25, prev_stock: 5, received_qty: 26, prepared_qty: 31, sold_qty: 12, unsold_qty: 19, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 300, cogs: 180, gross_profit: 120, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 32, product_name: 'Isaw Manok', sku: 'BBQ-00004', unit_cost: 8, selling_price: 15, prev_stock: 0, received_qty: 30, prepared_qty: 30, sold_qty: 25, unsold_qty: 5, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 375, cogs: 200, gross_profit: 175, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 33, product_name: 'Dugo', sku: 'BBQ-00005', unit_cost: 8, selling_price: 15, prev_stock: 0, received_qty: 10, prepared_qty: 10, sold_qty: 10, unsold_qty: 0, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 150, cogs: 80, gross_profit: 70, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 35, product_name: 'Bituka/Tumbong', sku: 'BBQ-00007', unit_cost: 15, selling_price: 20, prev_stock: 0, received_qty: 15, prepared_qty: 15, sold_qty: 15, unsold_qty: 0, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 300, cogs: 225, gross_profit: 75, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 36, product_name: 'Paa', sku: 'BBQ-00008', unit_cost: 10, selling_price: 20, prev_stock: 0, received_qty: 10, prepared_qty: 10, sold_qty: 5, unsold_qty: 5, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 100, cogs: 50, gross_profit: 50, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 37, product_name: 'Tenga', sku: 'BBQ-00009', unit_cost: 14, selling_price: 20, prev_stock: 0, received_qty: 15, prepared_qty: 15, sold_qty: 9, unsold_qty: 6, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 180, cogs: 126, gross_profit: 54, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 38, product_name: 'Hotdog', sku: 'BBQ-00010', unit_cost: 9, selling_price: 20, prev_stock: 3, received_qty: 17, prepared_qty: 20, sold_qty: 12, unsold_qty: 8, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 240, cogs: 108, gross_profit: 132, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 39, product_name: 'Bulaklak', sku: 'BBQ-00011', unit_cost: 16, selling_price: 25, prev_stock: 0, received_qty: 15, prepared_qty: 15, sold_qty: 2, unsold_qty: 12, spoilage_qty: 1, discrepancy: 0, spoilage_loss: 25, actual_revenue: 50, cogs: 32, gross_profit: 18, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 40, product_name: 'Leeg', sku: 'BBQ-00012', unit_cost: 13, selling_price: 20, prev_stock: 0, received_qty: 10, prepared_qty: 10, sold_qty: 0, unsold_qty: 10, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 42, product_name: 'Atay', sku: 'BBQ-00014', unit_cost: 14, selling_price: 20, prev_stock: 0, received_qty: 0, prepared_qty: 0, sold_qty: 0, unsold_qty: 0, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 43, product_name: 'Suka', sku: 'BBQ-00015', unit_cost: 50, selling_price: 0, prev_stock: 0, received_qty: 0, prepared_qty: 1, sold_qty: 0, unsold_qty: 1, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
     ],
   },
   '2026-10-20': {
@@ -63,17 +63,17 @@ export const HISTORICAL_CLOSINGS: Record<string, DailyClosing> = {
     created_at: '2026-10-20T22:00:00.000Z',
     finalized_at: '2026-10-20T22:00:00.000Z',
     items: [
-      { product_id: 31, product_name: 'Pork BBQ', sku: 'BBQ-00003', unit_cost: 15, selling_price: 25, prev_stock: 19, received_qty: 0, prepared_qty: 19, sold_qty: 12, unsold_qty: 7, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 300, cogs: 180, gross_profit: 120 },
-      { product_id: 32, product_name: 'Isaw Manok', sku: 'BBQ-00004', unit_cost: 8, selling_price: 15, prev_stock: 5, received_qty: 25, prepared_qty: 30, sold_qty: 24, unsold_qty: 6, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 360, cogs: 192, gross_profit: 168 },
-      { product_id: 33, product_name: 'Dugo', sku: 'BBQ-00005', unit_cost: 8, selling_price: 15, prev_stock: 0, received_qty: 10, prepared_qty: 10, sold_qty: 7, unsold_qty: 3, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 105, cogs: 56, gross_profit: 49 },
-      { product_id: 35, product_name: 'Bituka/Tumbong', sku: 'BBQ-00007', unit_cost: 15, selling_price: 20, prev_stock: 0, received_qty: 15, prepared_qty: 15, sold_qty: 14, unsold_qty: 1, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 280, cogs: 210, gross_profit: 70 },
-      { product_id: 36, product_name: 'Paa', sku: 'BBQ-00008', unit_cost: 10, selling_price: 20, prev_stock: 5, received_qty: 5, prepared_qty: 10, sold_qty: 0, unsold_qty: 10, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 37, product_name: 'Tenga', sku: 'BBQ-00009', unit_cost: 14, selling_price: 20, prev_stock: 6, received_qty: 9, prepared_qty: 15, sold_qty: 9, unsold_qty: 6, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 180, cogs: 126, gross_profit: 54 },
-      { product_id: 38, product_name: 'Hotdog', sku: 'BBQ-00010', unit_cost: 9, selling_price: 20, prev_stock: 8, received_qty: 12, prepared_qty: 20, sold_qty: 8, unsold_qty: 12, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 160, cogs: 72, gross_profit: 88 },
-      { product_id: 39, product_name: 'Bulaklak', sku: 'BBQ-00011', unit_cost: 16, selling_price: 25, prev_stock: 12, received_qty: 3, prepared_qty: 15, sold_qty: 1, unsold_qty: 14, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 25, cogs: 16, gross_profit: 9 },
-      { product_id: 40, product_name: 'Leeg', sku: 'BBQ-00012', unit_cost: 13, selling_price: 20, prev_stock: 10, received_qty: 0, prepared_qty: 10, sold_qty: 6, unsold_qty: 4, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 120, cogs: 78, gross_profit: 42 },
-      { product_id: 42, product_name: 'Atay', sku: 'BBQ-00014', unit_cost: 14, selling_price: 20, prev_stock: 0, received_qty: 0, prepared_qty: 0, sold_qty: 0, unsold_qty: 0, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 43, product_name: 'Suka', sku: 'BBQ-00015', unit_cost: 50, selling_price: 0, prev_stock: 1, received_qty: 0, prepared_qty: 1, sold_qty: 0, unsold_qty: 1, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
+      { product_id: 31, product_name: 'Pork BBQ', sku: 'BBQ-00003', unit_cost: 15, selling_price: 25, prev_stock: 19, received_qty: 0, prepared_qty: 19, sold_qty: 12, unsold_qty: 7, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 300, cogs: 180, gross_profit: 120, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 32, product_name: 'Isaw Manok', sku: 'BBQ-00004', unit_cost: 8, selling_price: 15, prev_stock: 5, received_qty: 25, prepared_qty: 30, sold_qty: 24, unsold_qty: 6, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 360, cogs: 192, gross_profit: 168, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 33, product_name: 'Dugo', sku: 'BBQ-00005', unit_cost: 8, selling_price: 15, prev_stock: 0, received_qty: 10, prepared_qty: 10, sold_qty: 7, unsold_qty: 3, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 105, cogs: 56, gross_profit: 49, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 35, product_name: 'Bituka/Tumbong', sku: 'BBQ-00007', unit_cost: 15, selling_price: 20, prev_stock: 0, received_qty: 15, prepared_qty: 15, sold_qty: 14, unsold_qty: 1, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 280, cogs: 210, gross_profit: 70, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 36, product_name: 'Paa', sku: 'BBQ-00008', unit_cost: 10, selling_price: 20, prev_stock: 5, received_qty: 5, prepared_qty: 10, sold_qty: 0, unsold_qty: 10, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 37, product_name: 'Tenga', sku: 'BBQ-00009', unit_cost: 14, selling_price: 20, prev_stock: 6, received_qty: 9, prepared_qty: 15, sold_qty: 9, unsold_qty: 6, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 180, cogs: 126, gross_profit: 54, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 38, product_name: 'Hotdog', sku: 'BBQ-00010', unit_cost: 9, selling_price: 20, prev_stock: 8, received_qty: 12, prepared_qty: 20, sold_qty: 8, unsold_qty: 12, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 160, cogs: 72, gross_profit: 88, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 39, product_name: 'Bulaklak', sku: 'BBQ-00011', unit_cost: 16, selling_price: 25, prev_stock: 12, received_qty: 3, prepared_qty: 15, sold_qty: 1, unsold_qty: 14, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 25, cogs: 16, gross_profit: 9, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 40, product_name: 'Leeg', sku: 'BBQ-00012', unit_cost: 13, selling_price: 20, prev_stock: 10, received_qty: 0, prepared_qty: 10, sold_qty: 6, unsold_qty: 4, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 120, cogs: 78, gross_profit: 42, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 42, product_name: 'Atay', sku: 'BBQ-00014', unit_cost: 14, selling_price: 20, prev_stock: 0, received_qty: 0, prepared_qty: 0, sold_qty: 0, unsold_qty: 0, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 43, product_name: 'Suka', sku: 'BBQ-00015', unit_cost: 50, selling_price: 0, prev_stock: 1, received_qty: 0, prepared_qty: 1, sold_qty: 0, unsold_qty: 1, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
     ],
   },
   '2026-10-21': {
@@ -97,17 +97,17 @@ export const HISTORICAL_CLOSINGS: Record<string, DailyClosing> = {
     cash_discrepancy: 0,
     created_at: '2026-10-21T06:00:00.000Z',
     items: [
-      { product_id: 31, product_name: 'Pork BBQ', sku: 'BBQ-00003', unit_cost: 15, selling_price: 25, prev_stock: 7, received_qty: 0, prepared_qty: 7, sold_qty: 0, unsold_qty: 7, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 32, product_name: 'Isaw Manok', sku: 'BBQ-00004', unit_cost: 8, selling_price: 15, prev_stock: 6, received_qty: 0, prepared_qty: 6, sold_qty: 0, unsold_qty: 6, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 33, product_name: 'Dugo', sku: 'BBQ-00005', unit_cost: 8, selling_price: 15, prev_stock: 3, received_qty: 0, prepared_qty: 3, sold_qty: 0, unsold_qty: 3, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 35, product_name: 'Bituka/Tumbong', sku: 'BBQ-00007', unit_cost: 15, selling_price: 20, prev_stock: 1, received_qty: 0, prepared_qty: 1, sold_qty: 0, unsold_qty: 1, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 36, product_name: 'Paa', sku: 'BBQ-00008', unit_cost: 10, selling_price: 20, prev_stock: 10, received_qty: 0, prepared_qty: 10, sold_qty: 0, unsold_qty: 10, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 37, product_name: 'Tenga', sku: 'BBQ-00009', unit_cost: 14, selling_price: 20, prev_stock: 6, received_qty: 0, prepared_qty: 6, sold_qty: 0, unsold_qty: 6, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 38, product_name: 'Hotdog', sku: 'BBQ-00010', unit_cost: 9, selling_price: 20, prev_stock: 12, received_qty: 0, prepared_qty: 12, sold_qty: 0, unsold_qty: 12, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 39, product_name: 'Bulaklak', sku: 'BBQ-00011', unit_cost: 16, selling_price: 25, prev_stock: 14, received_qty: 0, prepared_qty: 14, sold_qty: 0, unsold_qty: 14, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 40, product_name: 'Leeg', sku: 'BBQ-00012', unit_cost: 13, selling_price: 20, prev_stock: 4, received_qty: 0, prepared_qty: 4, sold_qty: 0, unsold_qty: 4, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 42, product_name: 'Atay', sku: 'BBQ-00014', unit_cost: 14, selling_price: 20, prev_stock: 0, received_qty: 0, prepared_qty: 0, sold_qty: 0, unsold_qty: 0, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
-      { product_id: 43, product_name: 'Suka', sku: 'BBQ-00015', unit_cost: 50, selling_price: 0, prev_stock: 1, received_qty: 0, prepared_qty: 1, sold_qty: 0, unsold_qty: 1, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0 },
+      { product_id: 31, product_name: 'Pork BBQ', sku: 'BBQ-00003', unit_cost: 15, selling_price: 25, prev_stock: 7, received_qty: 0, prepared_qty: 7, sold_qty: 0, unsold_qty: 7, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 32, product_name: 'Isaw Manok', sku: 'BBQ-00004', unit_cost: 8, selling_price: 15, prev_stock: 6, received_qty: 0, prepared_qty: 6, sold_qty: 0, unsold_qty: 6, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 33, product_name: 'Dugo', sku: 'BBQ-00005', unit_cost: 8, selling_price: 15, prev_stock: 3, received_qty: 0, prepared_qty: 3, sold_qty: 0, unsold_qty: 3, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 35, product_name: 'Bituka/Tumbong', sku: 'BBQ-00007', unit_cost: 15, selling_price: 20, prev_stock: 1, received_qty: 0, prepared_qty: 1, sold_qty: 0, unsold_qty: 1, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 36, product_name: 'Paa', sku: 'BBQ-00008', unit_cost: 10, selling_price: 20, prev_stock: 10, received_qty: 0, prepared_qty: 10, sold_qty: 0, unsold_qty: 10, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 37, product_name: 'Tenga', sku: 'BBQ-00009', unit_cost: 14, selling_price: 20, prev_stock: 6, received_qty: 0, prepared_qty: 6, sold_qty: 0, unsold_qty: 6, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 38, product_name: 'Hotdog', sku: 'BBQ-00010', unit_cost: 9, selling_price: 20, prev_stock: 12, received_qty: 0, prepared_qty: 12, sold_qty: 0, unsold_qty: 12, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 39, product_name: 'Bulaklak', sku: 'BBQ-00011', unit_cost: 16, selling_price: 25, prev_stock: 14, received_qty: 0, prepared_qty: 14, sold_qty: 0, unsold_qty: 14, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 40, product_name: 'Leeg', sku: 'BBQ-00012', unit_cost: 13, selling_price: 20, prev_stock: 4, received_qty: 0, prepared_qty: 4, sold_qty: 0, unsold_qty: 4, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 42, product_name: 'Atay', sku: 'BBQ-00014', unit_cost: 14, selling_price: 20, prev_stock: 0, received_qty: 0, prepared_qty: 0, sold_qty: 0, unsold_qty: 0, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
+      { product_id: 43, product_name: 'Suka', sku: 'BBQ-00015', unit_cost: 50, selling_price: 0, prev_stock: 1, received_qty: 0, prepared_qty: 1, sold_qty: 0, unsold_qty: 1, spoilage_qty: 0, discrepancy: 0, spoilage_loss: 0, actual_revenue: 0, cogs: 0, gross_profit: 0, category_id: 1, category_name: 'Inihaw / BBQ', unit: 'sticks', sell_by_weight: false },
     ],
   },
 };
@@ -176,10 +176,25 @@ export async function saveDailyClosing(closing: DailyClosing): Promise<void> {
   }
 }
 
+export function enrichClosing(closing: DailyClosing): DailyClosing {
+  if (!closing || !closing.items) return closing;
+  const enrichedItems = closing.items.map(it => ({
+    ...it,
+    category_id: it.category_id ?? 1,
+    category_name: it.category_name || 'Inihaw / BBQ',
+    unit: it.unit || 'sticks',
+    sell_by_weight: it.sell_by_weight ?? false,
+  }));
+  return {
+    ...closing,
+    items: enrichedItems,
+  };
+}
+
 export async function getDailyClosingByDate(date: string): Promise<DailyClosing | undefined> {
   // Historical seed dates (Oct 19 & Oct 20) are permanently locked official bases
   if (date === '2026-10-19' || date === '2026-10-20') {
-    return HISTORICAL_CLOSINGS[date];
+    return enrichClosing(HISTORICAL_CLOSINGS[date]);
   }
 
   const db = await getDB();
@@ -191,7 +206,7 @@ export async function getDailyClosingByDate(date: string): Promise<DailyClosing 
       const serverClosing = res.data;
       const writeTx = db.transaction(STORES.DAILY_CLOSINGS, 'readwrite');
       await writeTx.store.put(serverClosing);
-      return serverClosing;
+      return enrichClosing(serverClosing);
     }
   } catch (err) {
     // Network offline or 404
@@ -226,10 +241,10 @@ export async function getDailyClosingByDate(date: string): Promise<DailyClosing 
       const writeTx2 = db.transaction(STORES.DAILY_CLOSINGS, 'readwrite');
       await writeTx2.store.put(fixedClosing);
       await writeTx2.done;
-      return fixedClosing;
+      return enrichClosing(fixedClosing);
     }
 
-    return local;
+    return enrichClosing(local);
   }
 
   // Fallback to seed for date if present (e.g. 2026-10-21 initial prepared basis)
@@ -239,7 +254,7 @@ export async function getDailyClosingByDate(date: string): Promise<DailyClosing 
       const writeTx = db.transaction(STORES.DAILY_CLOSINGS, 'readwrite');
       await writeTx.store.put(seed);
     } catch {}
-    return seed;
+    return enrichClosing(seed);
   }
 
   return undefined;
@@ -261,7 +276,7 @@ export async function getAllDailyClosings(): Promise<DailyClosing[]> {
     map.set(c.date, c);
   }
 
-  return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+  return Array.from(map.values()).map(enrichClosing).sort((a, b) => b.date.localeCompare(a.date));
 }
 
 export async function deleteDailyClosing(id: string): Promise<void> {
@@ -314,6 +329,19 @@ export async function creditSaleToDailyClosing(sale: PendingSale): Promise<void>
 
   if (changed) {
     const totalRev = items.reduce((s, i) => s + i.actual_revenue, 0);
+    const isCredit = (sale.payment_method_name || '').toLowerCase().includes('credit') ||
+                     (sale.payment_method_name || '').toLowerCase().includes('utang');
+    const cashDown = isCredit && sale.cash_tendered && sale.cash_tendered > 0
+      ? Math.min(sale.total_amount, sale.cash_tendered)
+      : 0;
+    const creditPortion = isCredit ? Math.max(0, sale.total_amount - cashDown) : 0;
+
+    const prevCashSales = closing.cash_sales ?? Math.max(0, totalRev - (closing.credit_sales || 0));
+    const newCashSales = isCredit ? prevCashSales + cashDown : prevCashSales + sale.total_amount;
+    const newCreditSales = (closing.credit_sales || 0) + creditPortion;
+    const debtCollections = closing.debt_collections || 0;
+    const expCash = (closing.opening_cash || 0) + newCashSales + debtCollections - (closing.cash_expenses || 0) - (closing.bills_allocation || 0);
+
     const updatedClosing: DailyClosing = {
       ...closing,
       items,
@@ -325,11 +353,92 @@ export async function creditSaleToDailyClosing(sale: PendingSale): Promise<void>
       total_cogs: items.reduce((s, i) => s + i.cogs, 0),
       total_gross_profit: items.reduce((s, i) => s + i.gross_profit, 0),
       total_spoilage_loss: items.reduce((s, i) => s + i.spoilage_loss, 0),
-      cash_sales: totalRev,
-      expected_cash_on_hand: (closing.opening_cash || 0) + totalRev - (closing.cash_expenses || 0) - (closing.bills_allocation || 0),
+      cash_sales: newCashSales,
+      credit_sales: newCreditSales,
+      debt_collections: debtCollections,
+      expected_cash_on_hand: expCash,
       actual_cash_on_hand: (closing.actual_cash_on_hand !== undefined && closing.actual_cash_on_hand !== closing.expected_cash_on_hand)
         ? closing.actual_cash_on_hand
-        : ((closing.opening_cash || 0) + totalRev - (closing.cash_expenses || 0) - (closing.bills_allocation || 0)),
+        : expCash,
+    };
+    await saveDailyClosing(updatedClosing);
+  }
+}
+
+/**
+ * Reverse a voided sale from Daily Closing
+ */
+export async function voidSaleFromDailyClosing(sale: {
+  sold_at: string;
+  items: Array<{ product_id: number; product_name?: string; quantity: number }>;
+  total_amount: number;
+  cash_tendered?: number | null;
+  payment_method_name?: string;
+}): Promise<void> {
+  const saleDate = sale.sold_at ? sale.sold_at.split('T')[0] : new Date().toISOString().split('T')[0];
+  if (saleDate === '2026-10-19' || saleDate === '2026-10-20') return;
+
+  const db = await getDB();
+  const tx = db.transaction(STORES.DAILY_CLOSINGS, 'readonly');
+  const index = tx.store.index('by-date');
+  const closing = await index.get(saleDate);
+
+  if (!closing || closing.status === 'FINALIZED') return;
+
+  const items = [...closing.items];
+  let changed = false;
+
+  for (const sItem of sale.items) {
+    const pId = sItem.product_id;
+    const normName = (sItem.product_name || '').toLowerCase().trim();
+    const target = items.find(
+      it => it.product_id === pId || it.product_name.toLowerCase().trim() === normName
+    );
+
+    if (target) {
+      target.sold_qty = Math.max(0, (target.sold_qty || 0) - sItem.quantity);
+      target.unsold_qty = Math.max(0, target.prepared_qty - target.sold_qty - target.spoilage_qty);
+      target.actual_revenue = target.sold_qty * target.selling_price;
+      target.cogs = target.sold_qty * target.unit_cost;
+      target.gross_profit = target.actual_revenue - target.cogs;
+      target.discrepancy = (target.sold_qty + target.unsold_qty + target.spoilage_qty) - target.prepared_qty;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    const totalRev = items.reduce((s, i) => s + i.actual_revenue, 0);
+    const isCredit = (sale.payment_method_name || '').toLowerCase().includes('credit') ||
+                     (sale.payment_method_name || '').toLowerCase().includes('utang');
+    const cashDown = isCredit && sale.cash_tendered && sale.cash_tendered > 0
+      ? Math.min(sale.total_amount, sale.cash_tendered)
+      : 0;
+    const creditPortion = isCredit ? Math.max(0, sale.total_amount - cashDown) : 0;
+
+    const currentCashSales = closing.cash_sales ?? Math.max(0, totalRev - (closing.credit_sales || 0));
+    const newCashSales = isCredit ? Math.max(0, currentCashSales - cashDown) : Math.max(0, currentCashSales - sale.total_amount);
+    const newCreditSales = Math.max(0, (closing.credit_sales || 0) - creditPortion);
+    const debtCollections = closing.debt_collections || 0;
+    const expCash = (closing.opening_cash || 0) + newCashSales + debtCollections - (closing.cash_expenses || 0) - (closing.bills_allocation || 0);
+
+    const updatedClosing: DailyClosing = {
+      ...closing,
+      items,
+      total_prepared: items.reduce((s, i) => s + i.prepared_qty, 0),
+      total_sold: items.reduce((s, i) => s + i.sold_qty, 0),
+      total_unsold: items.reduce((s, i) => s + i.unsold_qty, 0),
+      total_spoilage: items.reduce((s, i) => s + i.spoilage_qty, 0),
+      total_revenue: totalRev,
+      total_cogs: items.reduce((s, i) => s + i.cogs, 0),
+      total_gross_profit: items.reduce((s, i) => s + i.gross_profit, 0),
+      total_spoilage_loss: items.reduce((s, i) => s + i.spoilage_loss, 0),
+      cash_sales: newCashSales,
+      credit_sales: newCreditSales,
+      debt_collections: debtCollections,
+      expected_cash_on_hand: expCash,
+      actual_cash_on_hand: (closing.actual_cash_on_hand !== undefined && closing.actual_cash_on_hand !== closing.expected_cash_on_hand)
+        ? closing.actual_cash_on_hand
+        : expCash,
     };
     await saveDailyClosing(updatedClosing);
   }

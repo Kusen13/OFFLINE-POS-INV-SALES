@@ -12,6 +12,8 @@ interface SyncState {
   lastSyncTime: string | null;
   serverReachable: boolean;
   pendingCount: number;
+  pendingSalesCount: number;
+  pendingMutationsCount: number;
   syncedCount: number;
   failedCount: number;
   lastError: string | null;
@@ -33,6 +35,8 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   lastSyncTime: null,
   serverReachable: false,
   pendingCount: 0,
+  pendingSalesCount: 0,
+  pendingMutationsCount: 0,
   syncedCount: 0,
   failedCount: 0,
   lastError: null,
@@ -43,6 +47,8 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     const mutationCount = await getPendingMutationCount();
     set({
       pendingCount: counts.pending + mutationCount,
+      pendingSalesCount: counts.pending,
+      pendingMutationsCount: mutationCount,
       syncedCount: counts.synced,
       failedCount: counts.failed,
     });

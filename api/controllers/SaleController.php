@@ -4,8 +4,17 @@
  * Handles sales history queries (sales are created via SyncController)
  */
 
-function handleSales(string $method, ?string $id): void {
+function handleSales(string $method, ?string $id, ?string $action = null): void {
     $pdo = getDBConnection();
+
+    if ($method === 'DELETE' || ($method === 'POST' && $action === 'void')) {
+        if (!$id) {
+            jsonError('Sale ID is required for voiding', 400);
+            return;
+        }
+        voidSale($pdo, $id);
+        return;
+    }
 
     if ($method !== 'GET') {
         jsonMethodNotAllowed();
@@ -163,4 +172,124 @@ function getSale(PDO $pdo, int $id): void {
     }, $items);
 
     jsonResponse($sale);
+}
+
+function voidSale(PDO $pdo, string $idOrUuid): void {
+    try {
+        $pdo->beginTransaction();
+
+        // 1. Fetch the sale
+        if (is_numeric($idOrUuid)) {
+            $stmt = $pdo->prepare('SELECT s.*, pm.name as payment_method_name FROM sales s LEFT JOIN payment_methods pm ON s.payment_method_id = pm.id WHERE s.id = :id FOR UPDATE');
+            $stmt->execute([':id' => (int) $idOrUuid]);
+        } else {
+            $stmt = $pdo->prepare('SELECT s.*, pm.name as payment_method_name FROM sales s LEFT JOIN payment_methods pm ON s.payment_method_id = pm.id WHERE s.uuid = :uuid OR s.receipt_number = :receipt FOR UPDATE');
+            $stmt->execute([':uuid' => $idOrUuid, ':receipt' => $idOrUuid]);
+        }
+        $sale = $stmt->fetch();
+
+        if (!$sale) {
+            $pdo->rollBack();
+            jsonNotFound('Sale record not found');
+            return;
+        }
+
+        $saleId = (int) $sale['id'];
+        $receiptNumber = $sale['receipt_number'];
+        $customerId = $sale['customer_id'] ? (int) $sale['customer_id'] : null;
+        $totalAmount = (float) $sale['total_amount'];
+        $cashTendered = isset($sale['cash_tendered']) ? (float) $sale['cash_tendered'] : 0;
+        $pMethodName = $sale['payment_method_name'] ?: '';
+        $isUtang = stripos($pMethodName, 'utang') !== false || stripos($pMethodName, 'credit') !== false;
+
+        // 2. Fetch sale items to restore inventory
+        $stmtItems = $pdo->prepare('SELECT * FROM sale_items WHERE sale_id = :sale_id');
+        $stmtItems->execute([':sale_id' => $saleId]);
+        $items = $stmtItems->fetchAll();
+
+        foreach ($items as $item) {
+            $productId = (int) $item['product_id'];
+            $qty = (float) $item['quantity'];
+
+            // Fetch current product stock
+            $stmtProd = $pdo->prepare('SELECT current_stock FROM products WHERE id = :id FOR UPDATE');
+            $stmtProd->execute([':id' => $productId]);
+            $prod = $stmtProd->fetch();
+
+            if ($prod) {
+                $stockBefore = (float) $prod['current_stock'];
+                $stockAfter = $stockBefore + $qty;
+
+                // Update product stock
+                $stmtUpProd = $pdo->prepare('UPDATE products SET current_stock = :stock WHERE id = :id');
+                $stmtUpProd->execute([':stock' => $stockAfter, ':id' => $productId]);
+
+                // Record inventory movement
+                $stmtMov = $pdo->prepare('
+                    INSERT INTO inventory_movements (product_id, type, quantity_change, stock_before, stock_after, reference_type, reference_id, notes)
+                    VALUES (:pid, :type, :change, :before, :after, :reftype, :refid, :notes)
+                ');
+                $stmtMov->execute([
+                    ':pid' => $productId,
+                    ':type' => 'RESTOCK',
+                    ':change' => $qty,
+                    ':before' => $stockBefore,
+                    ':after' => $stockAfter,
+                    ':reftype' => 'void_sale',
+                    ':refid' => $saleId,
+                    ':notes' => "Void Resibo #{$receiptNumber}",
+                ]);
+            }
+        }
+
+        // 3. If Utang sale, reverse customer balance & write ledger entry
+        if ($customerId && $isUtang) {
+            $cashDown = $cashTendered > 0 ? min($totalAmount, $cashTendered) : 0;
+            $reversalAmt = max(0, $totalAmount - $cashDown);
+
+            if ($reversalAmt > 0) {
+                $stmtCust = $pdo->prepare('SELECT current_balance FROM customers WHERE id = :id FOR UPDATE');
+                $stmtCust->execute([':id' => $customerId]);
+                $cBal = (float) $stmtCust->fetchColumn();
+                $newBal = max(0, $cBal - $reversalAmt);
+
+                $stmtUpCust = $pdo->prepare('UPDATE customers SET current_balance = :bal, updated_at = NOW() WHERE id = :id');
+                $stmtUpCust->execute([':bal' => $newBal, ':id' => $customerId]);
+
+                $stmtLedger = $pdo->prepare('
+                    INSERT INTO customer_ledger (uuid, customer_id, transaction_type, amount, balance_after, reference_type, reference_id, payment_method, notes, created_at)
+                    VALUES (UUID(), :cid, :type, :amt, :after, :reftype, :refid, :pmethod, :notes, NOW())
+                ');
+                $stmtLedger->execute([
+                    ':cid' => $customerId,
+                    ':type' => 'PAYMENT',
+                    ':amt' => $reversalAmt,
+                    ':after' => $newBal,
+                    ':reftype' => 'VOID',
+                    ':refid' => $receiptNumber,
+                    ':pmethod' => 'Void / Cancel',
+                    ':notes' => "Kanselado / Void Resibo #{$receiptNumber}",
+                ]);
+            }
+        }
+
+        // 4. Delete the sale from sales table (cascade deletes sale_items)
+        $stmtDel = $pdo->prepare('DELETE FROM sales WHERE id = :id');
+        $stmtDel->execute([':id' => $saleId]);
+
+        $pdo->commit();
+
+        jsonResponse([
+            'success' => true,
+            'message' => "Matagumpay na na-VOID ang Resibo #{$receiptNumber}. Naibalik ang stocks.",
+            'receipt_number' => $receiptNumber,
+            'sale_id' => $saleId,
+        ]);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('Void Sale Error: ' . $e->getMessage());
+        jsonError('Hindi ma-void ang resibo: ' . $e->getMessage(), 500);
+    }
 }

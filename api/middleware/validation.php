@@ -42,6 +42,26 @@ function sanitizeString(?string $value): ?string {
 }
 
 /**
+ * Sanitize image data URL or image path (supports base64, data URLs, relative or http paths)
+ */
+function sanitizeImage(?string $value): ?string {
+    if ($value === null) return null;
+    $trimmed = trim($value);
+    if ($trimmed === '') return null;
+    if (
+        str_starts_with($trimmed, 'data:image/') ||
+        str_starts_with($trimmed, 'http://') ||
+        str_starts_with($trimmed, 'https://') ||
+        str_starts_with($trimmed, '/uploads/') ||
+        str_starts_with($trimmed, '/assets/') ||
+        str_starts_with($trimmed, 'assets/')
+    ) {
+        return $trimmed;
+    }
+    return null;
+}
+
+/**
  * Validate and sanitize decimal value
  */
 function sanitizeDecimal(mixed $value): ?float {

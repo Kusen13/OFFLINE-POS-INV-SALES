@@ -69,10 +69,28 @@ model products {
   name                String                @db.VarChar(150)
   sku                 String                @unique(map: "uk_products_sku") @db.VarChar(50)
   description         String?               @db.Text
+  /// product = sellable in POS, supply = internal ingredient
+  item_type           String                @default("product") @db.VarChar(10)
   cost_price          Decimal               @default(0.00) @db.Decimal(12, 2)
+  /// For sell_by_weight items: price-per-unit (kg, tali, etc.)
   selling_price       Decimal               @default(0.00) @db.Decimal(12, 2)
-  current_stock       Int                   @default(0)
-  low_stock_threshold Int                   @default(10) @db.UnsignedInt
+  /// Decimal for by-weight items (kg)
+  current_stock       Decimal               @default(0.000) @db.Decimal(12, 3)
+  initial_stock       Decimal               @default(0.000) @db.Decimal(12, 3)
+  initial_stock_date  DateTime?             @db.Date
+  low_stock_threshold Decimal               @default(10.000) @db.Decimal(12, 3)
+  /// Ideal par/prep level
+  target_stock        Decimal               @default(20.000) @db.Decimal(12, 3)
+  /// kg, g, pcs, sticks, tali, bundle, puso, sako, lata, bottle, pack
+  unit                String                @default("sticks") @db.VarChar(20)
+  /// 1 = POS shows weight input modal; price = selling_price × entered weight
+  sell_by_weight      Boolean               @default(false)
+  /// UUID of linked supplier
+  supplier_id         String?               @db.VarChar(36)
+  /// Denormalized supplier name
+  supplier_name       String?               @db.VarChar(150)
+  /// Wholesale / reseller price per unit
+  reseller_price      Decimal?              @db.Decimal(12, 2)
   image_path          String?               @db.VarChar(255)
   is_active           Boolean               @default(true)
   created_at          DateTime              @default(now()) @db.DateTime(0)
@@ -83,10 +101,12 @@ model products {
   stock_receipt_items stock_receipt_items[]
 
   @@index([is_active], map: "idx_products_active")
+  @@index([item_type], map: "idx_products_item_type")
   @@index([category_id], map: "idx_products_category")
   @@index([current_stock, low_stock_threshold], map: "idx_products_stock")
   @@index([updated_at], map: "idx_products_updated")
 }
+
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model sale_items {

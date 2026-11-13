@@ -2,19 +2,28 @@
  * Products Page - Full product management with CRUD, search, filters, and pagination
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { fetchProducts, fetchCategories, createProduct, updateProduct, deleteProduct } from '../../api/endpoints';
-import { replaceAllProducts, getAllProducts, saveLocalProduct, deleteLocalProduct, getAllCategories } from '../../db/productRepository';
+import { getAllProducts, saveLocalProduct, deleteLocalProduct, getAllCategories, upsertProducts } from '../../db/productRepository';
 import { addPendingMutation, removeMutationByTempId } from '../../db/mutationRepository';
 import { useSyncStore } from '../../features/sync/syncStore';
+import { useAuthStore } from '../../features/security/authStore';
 import { formatCurrency } from '../../utils/currency';
 import { getTodayStr, SYSTEM_START_DATE } from '../../utils/date';
 import { exportToCSV, formatProductsForCSV } from '../../utils/csv';
-import type { Product, Category, ProductFormData, ItemType } from '../../types/product';
+import { getCategoryIcon } from '../../types/product';
+import type { Product, Category, ProductFormData, ItemType, BusinessType, BusinessDepartment } from '../../types/product';
+import { getAllBusinessDepartments } from '../../utils/businessStorage';
+import { BusinessDepartmentModal } from '../../components/categories/BusinessDepartmentModal';
 import { getAllSuppliers } from '../../db/supplierRepository';
 import type { Supplier } from '../../types/supplier';
 import { getAllOrderItems, createOrderItem, updateOrderItem } from '../../db/orderItemRepository';
+import { type RicePackagingFilter, RICE_PACKAGING_OPTIONS, matchRicePackaging } from '../../utils/ricePackaging';
+import { ProductExcelImportModal } from '../../components/products/ProductExcelImportModal';
+import { BarcodeLabelModal } from '../../components/products/BarcodeLabelModal';
+import { ProductCameraCaptureModal } from '../../components/products/ProductCameraCaptureModal';
+import { compressImageFile, compressImageUrl, isValidImageUrl } from '../../utils/imageCompressor';
 
 interface ProductFilters {
   page: number;
@@ -29,10 +38,57 @@ export function ProductsPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [pagination, setPagination] = useState({ total: 0, page: 1, per_page: 15, total_pages: 0 });
   const [filters, setFilters] = useState<ProductFilters>({ page: 1, per_page: 15, search: '', category_id: undefined, item_type: undefined });
+
+  // Auth & Cost Privacy
+  const { isOwner, hideCostFromCashier } = useAuthStore();
+  const canViewCost = isOwner || !hideCostFromCashier;
+
+  // Dynamic Business Departments
+  const [departments, setDepartments] = useState<BusinessDepartment[]>(() => getAllBusinessDepartments());
+  const [selectedDept, setSelectedDept] = useState<BusinessType>('barbeque');
+  const [showDeptModal, setShowDeptModal] = useState(false);
+  const [deptToEdit, setDeptToEdit] = useState<BusinessDepartment | null>(null);
+
+  useEffect(() => {
+    const handleDeptUpdated = () => {
+      setDepartments(getAllBusinessDepartments());
+    };
+    window.addEventListener('pos_departments_updated', handleDeptUpdated);
+    return () => window.removeEventListener('pos_departments_updated', handleDeptUpdated);
+  }, []);
+
+  const getDeptOfCategory = useCallback((cat: Category): BusinessType => {
+    if (cat.business_type) return cat.business_type;
+    const n = cat.name.toLowerCase();
+    if (n.includes('bbq') || n.includes('ihaw') || n.includes('barbeque')) return 'barbeque';
+    if (n.includes('rice') || n.includes('bigas')) return 'rice';
+    if (n.includes('gulay') || n.includes('vegetable')) return 'vegetables';
+    return 'groceries';
+  }, []);
+
+  const [ricePackagingFilter, setRicePackagingFilter] = useState<RicePackagingFilter>('all');
+
+  const deptCategories = useMemo(() => {
+    // Only include categories that actually have products in this department
+    const productCatIds = new Set(products.map(p => p.category_id));
+    return categories.filter(c => getDeptOfCategory(c) === selectedDept && (productCatIds.has(c.id) || (c.product_count ?? 0) > 0));
+  }, [categories, products, selectedDept, getDeptOfCategory]);
+
+  const displayedProducts = useMemo(() => {
+    if (selectedDept === 'rice' && ricePackagingFilter !== 'all') {
+      return products.filter(p => matchRicePackaging(p.name, p.unit, (p as any).sell_by_weight, ricePackagingFilter));
+    }
+    return products;
+  }, [products, selectedDept, ricePackagingFilter]);
+
+  const activeDeptInfo = departments.find(d => d.id === selectedDept) || departments[0];
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [noticeMsg, setNoticeMsg] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false);
+  const [showToolsDropdown, setShowToolsDropdown] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<Product | null>(null);
   const [searchInput, setSearchInput] = useState('');
@@ -52,23 +108,34 @@ export function ProductsPage() {
         search: filters.search || undefined,
         category_id: filters.category_id,
         item_type: filters.item_type,
+        business_type: selectedDept,
       });
-      await replaceAllProducts(res.data);
+      await upsertProducts(res.data);
       const localAll = await getAllProducts();
-      const pendingItems = localAll.filter(p => p.id < 0 || (p as any).is_pending);
+      const pendingItems = localAll.filter(p => {
+        if (!(p.id < 0 || (p as any).is_pending)) return false;
+        const bType = p.business_type || (p.category_id ? categories.find(c => c.id === p.category_id)?.business_type : undefined);
+        return (bType || 'barbeque') === selectedDept;
+      });
       setProducts([...pendingItems, ...res.data]);
       setPagination(res.pagination);
     } catch {
       // Fallback to local IndexedDB
       try {
         const localAll = await getAllProducts();
-        let filtered = localAll;
+        let filtered = localAll.filter(p => {
+          const bType = p.business_type || (p.category_id ? categories.find(c => c.id === p.category_id)?.business_type : undefined);
+          return (bType || 'barbeque') === selectedDept;
+        });
         if (filters.search) {
           const q = filters.search.toLowerCase();
           filtered = filtered.filter(p => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q));
         }
         if (filters.category_id) {
           filtered = filtered.filter(p => p.category_id === filters.category_id);
+        }
+        if (filters.item_type) {
+          filtered = filtered.filter(p => p.item_type === filters.item_type);
         }
         setProducts(filtered);
         setPagination({
@@ -83,7 +150,7 @@ export function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, selectedDept, categories]);
 
   useEffect(() => {
     loadProducts();
@@ -142,6 +209,7 @@ export function ProductsPage() {
       const fullData = {
         ...data,
         item_type: data.item_type || 'product',
+        business_type: data.business_type || selectedDept,
         target_stock: data.target_stock ?? 20,
         unit: data.unit || 'sticks',
         // Supplies are not for sale — force selling_price to 0
@@ -213,7 +281,7 @@ export function ProductsPage() {
             unit: fullData.unit,
             supplier_id: data.supplier_id,
             supplier_name: data.supplier_name,
-            image_path: null,
+            image_path: data.image_path ?? null,
             is_active: data.is_active ?? true,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -333,18 +401,91 @@ export function ProductsPage() {
               : 'Lahat ng items — Products (ibinebenta) at Supplies (internal)'}
           </p>
         </div>
-        <div className="flex items-center gap-1.5 sm:gap-2 flex-nowrap shrink-0 overflow-x-auto no-scrollbar w-full lg:w-auto justify-end">
-          {products.length > 0 && (
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 w-full lg:w-auto justify-end relative">
+          {/* Mobile Tools Dropdown (< lg screens) */}
+          <div className="lg:hidden relative">
             <button
-              onClick={() => exportToCSV(formatProductsForCSV(products), `products_export_${getTodayStr()}`)}
+              type="button"
+              onClick={() => setShowToolsDropdown(prev => !prev)}
+              className="px-2.5 py-1.5 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-200 border border-surface-700 text-xs font-semibold flex items-center gap-1 shadow-xs cursor-pointer"
+            >
+              <span>⚙️</span>
+              <span>Gamit ▾</span>
+            </button>
+            {showToolsDropdown && (
+              <div
+                className="absolute right-0 top-full mt-1.5 w-48 bg-surface-850 border border-surface-700 rounded-xl shadow-2xl py-1 z-30 animate-fade-in"
+                onClick={() => setShowToolsDropdown(false)}
+              >
+                {products.length > 0 && (
+                  <button
+                    onClick={() => exportToCSV(formatProductsForCSV(products), `products_export_${getTodayStr()}`)}
+                    className="w-full text-left px-3 py-2 text-xs text-surface-200 hover:bg-surface-700/60 flex items-center gap-2 cursor-pointer"
+                  >
+                    <span>📤</span>
+                    <span>Export CSV</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowImportModal(true)}
+                  className="w-full text-left px-3 py-2 text-xs text-surface-200 hover:bg-surface-700/60 flex items-center gap-2 cursor-pointer"
+                >
+                  <span>📥</span>
+                  <span>Import Excel</span>
+                </button>
+                <button
+                  onClick={() => setShowBarcodeModal(true)}
+                  className="w-full text-left px-3 py-2 text-xs text-surface-200 hover:bg-surface-700/60 flex items-center gap-2 cursor-pointer"
+                >
+                  <span>🏷️</span>
+                  <span>Price Tags & Barcode</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Desktop Full Action Buttons (lg: screens) */}
+          <div className="hidden lg:flex items-center gap-1.5 sm:gap-2">
+            {products.length > 0 && (
+              <button
+                onClick={() => exportToCSV(formatProductsForCSV(products), `products_export_${getTodayStr()}`)}
+                className="px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-200 border border-surface-700 text-xs sm:text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-xs cursor-pointer"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>Export CSV</span>
+              </button>
+            )}
+            <button
+              onClick={() => setShowImportModal(true)}
               className="px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-200 border border-surface-700 text-xs sm:text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-xs cursor-pointer"
+              title="Mag-import ng mga produkto mula sa Excel o CSV"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
-              <span>Export CSV</span>
+              <span>📥 Import Excel</span>
             </button>
-          )}
+            <button
+              onClick={() => setShowBarcodeModal(true)}
+              className="px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-200 border border-surface-700 text-xs sm:text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-xs cursor-pointer"
+              title="Mag-print ng Barcode & Price Tags para sa estante o paninda"
+            >
+              <span>🏷️</span>
+              <span>Price Tags & Barcode</span>
+            </button>
+          </div>
+
+          {/* Always Visible on Both Mobile & Desktop */}
+          <button
+            onClick={() => setShowDeptModal(true)}
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-200 border border-surface-700 text-xs sm:text-sm font-semibold transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            title="Magtayo ng Bagong Negosyo"
+          >
+            <span>🏢</span>
+            <span>+ Negosyo</span>
+          </button>
           <button
             onClick={() => { setEditingProduct(null); setShowForm(true); }}
             className={`px-3 sm:px-4 py-1.5 rounded-xl text-white text-xs sm:text-sm font-semibold transition-colors shadow-xs flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
@@ -356,9 +497,52 @@ export function ProductsPage() {
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
-            <span>+ {filters.item_type === 'supply' ? 'Add Supply' : 'Add Product'}</span>
+            <span>+ {filters.item_type === 'supply' ? 'Supply' : 'Product'}</span>
           </button>
         </div>
+      </div>
+
+      {/* ── Strict Department Ribbon (NO "Lahat" button) ── */}
+      <div className="flex-shrink-0 flex items-center justify-between gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[10px] font-bold text-surface-400 uppercase tracking-wider shrink-0 mr-1 hidden sm:inline">
+            Negosyo:
+          </span>
+          {departments.map(dept => {
+            const isActive = selectedDept === dept.id;
+            return (
+              <button
+                key={dept.id}
+                onClick={() => {
+                  setSelectedDept(dept.id);
+                  setRicePackagingFilter('all');
+                  setFilters(f => ({ ...f, page: 1, category_id: undefined }));
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer border ${
+                  isActive
+                    ? `${dept.activeColor} shadow-md`
+                    : 'bg-surface-800/80 hover:bg-surface-700/80 text-surface-400 hover:text-surface-200 border-surface-700/60'
+                }`}
+              >
+                <span>{dept.icon}</span>
+                <span>{dept.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Quick in-place Edit Business Profile Button */}
+        <button
+          onClick={() => {
+            setDeptToEdit(activeDeptInfo);
+            setShowDeptModal(true);
+          }}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-surface-800/90 hover:bg-surface-700 text-surface-300 hover:text-surface-100 border border-surface-700/60 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shadow-xs shrink-0"
+          title={`I-edit ang Profile ng ${activeDeptInfo?.label}`}
+        >
+          <span>⚙️</span>
+          <span className="hidden xs:inline">Ayusin ang {activeDeptInfo?.label}</span>
+        </button>
       </div>
 
       {/* ── Type Tabs ── */}
@@ -412,7 +596,7 @@ export function ProductsPage() {
         <div className="p-1.5 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex items-center justify-between">
           <div className="min-w-0">
             <span className="text-[9px] sm:text-[10px] font-bold text-surface-400 uppercase tracking-wider block truncate">Categories</span>
-            <span className="text-xs sm:text-base font-extrabold text-primary-400 block truncate">{categories.length}</span>
+            <span className="text-xs sm:text-base font-extrabold text-primary-400 block truncate">{deptCategories.length}</span>
           </div>
           <span className="text-[9px] sm:text-[10px] text-surface-500 font-medium shrink-0 ml-1">uri</span>
         </div>
@@ -459,13 +643,29 @@ export function ProductsPage() {
         <select
           value={filters.category_id ?? ''}
           onChange={e => setFilters(f => ({ ...f, page: 1, category_id: e.target.value ? Number(e.target.value) : undefined }))}
-          className="w-28 sm:w-44 text-xs py-1.5 px-2 rounded-lg bg-surface-800 border border-surface-700 text-surface-200 shrink-0 cursor-pointer focus:outline-none focus:border-primary-500"
+          className="w-36 sm:w-52 text-xs py-1.5 px-2 rounded-lg bg-surface-800 border border-surface-700 text-surface-200 shrink-0 cursor-pointer focus:outline-none focus:border-primary-500"
         >
-          <option value="">All Categories</option>
-          {categories.map(c => (
+          <option value="">Lahat sa {activeDeptInfo?.label}</option>
+          {deptCategories.map(c => (
             <option key={c.id} value={c.id}>{c.name} ({c.product_count ?? 0})</option>
           ))}
         </select>
+
+        {/* Bigasan (Rice) Packaging Filter Dropdown - Inlined */}
+        {selectedDept === 'rice' && (
+          <select
+            value={ricePackagingFilter}
+            onChange={e => setRicePackagingFilter(e.target.value as RicePackagingFilter)}
+            className="w-32 sm:w-44 text-xs py-1.5 px-2 rounded-lg bg-surface-800 border border-amber-600/60 text-amber-300 font-bold shrink-0 cursor-pointer focus:outline-none focus:border-amber-500 shadow-xs"
+            title="I-filter ayon sa Sukat / Packaging"
+          >
+            {RICE_PACKAGING_OPTIONS.map(opt => (
+              <option key={opt.key} value={opt.key}>
+                {opt.icon} {opt.label}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {noticeMsg && (
@@ -529,11 +729,11 @@ export function ProductsPage() {
               <p className="text-xs text-surface-400">Kinukuha ang talaan ng mga produkto...</p>
             </div>
           </div>
-        ) : products.length === 0 ? (
+        ) : displayedProducts.length === 0 ? (
           <div className="flex-1 min-h-0 flex flex-col items-center justify-center py-12 text-center">
             <span className="text-3xl mb-2 block">📦</span>
             <p className="text-surface-300 font-medium text-xs sm:text-sm">Walang nahanap na produkto</p>
-            <p className="text-surface-500 text-[11px] mt-0.5">{searchInput ? 'Subukan ang ibang search term' : 'Mag-add ng produkto upang makapagsimula'}</p>
+            <p className="text-surface-500 text-[11px] mt-0.5">{searchInput ? 'Subukan ang ibang search term' : 'Walang produkto sa napiling filter o sukat'}</p>
           </div>
         ) : (
           <>
@@ -542,7 +742,7 @@ export function ProductsPage() {
               {viewMode === 'cards' ? (
                 /* Cards View - 100% Mobile Friendly */
                 <div className="p-2 sm:p-2.5 space-y-1.5">
-                  {products.map(p => {
+                  {displayedProducts.map(p => {
                     const unitProfit = (Number(p.selling_price) || 0) - (Number(p.cost_price) || 0);
                     const marginPct = Number(p.selling_price) > 0 ? ((unitProfit / Number(p.selling_price)) * 100).toFixed(0) : 0;
                     return (
@@ -550,7 +750,23 @@ export function ProductsPage() {
                         key={p.id}
                         className="p-2.5 rounded-xl bg-surface-900/40 hover:bg-surface-700/20 border border-surface-800/60 transition-colors"
                       >
-                        <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start justify-between gap-2.5">
+                          {p.image_path && isValidImageUrl(p.image_path) ? (
+                            <img
+                              src={p.image_path}
+                              alt={p.name}
+                              referrerPolicy="no-referrer"
+                              className="w-12 h-12 rounded-xl object-cover border border-surface-700/60 shrink-0 shadow-xs"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLElement).style.display = 'none';
+                                const fallback = (e.currentTarget as HTMLElement).nextElementSibling;
+                                if (fallback) (fallback as HTMLElement).classList.remove('hidden');
+                              }}
+                            />
+                          ) : null}
+                          <div className={`w-12 h-12 rounded-xl bg-surface-800/80 border border-surface-700/50 flex items-center justify-center text-xl shrink-0 shadow-xs ${p.image_path && isValidImageUrl(p.image_path) ? 'hidden' : ''}`}>
+                            {getCategoryIcon(p.category_name)}
+                          </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
                               <p className="text-surface-100 font-semibold text-xs sm:text-sm truncate">{p.name}</p>
@@ -607,12 +823,18 @@ export function ProductsPage() {
                             ) : (
                               <>
                                 <span className="text-xs font-bold text-emerald-400">{formatCurrency(p.selling_price)}</span>
-                                <span className="text-[10px] text-surface-500">Puhunan: {formatCurrency(p.cost_price)}</span>
-                                <span className={`text-[10px] font-semibold px-1 py-0.2 rounded ${
-                                  unitProfit >= 0 ? 'bg-success-500/10 text-success-400' : 'bg-danger-500/10 text-danger-400'
-                                }`}>
-                                  +{formatCurrency(unitProfit)} ({marginPct}%)
-                                </span>
+                                {canViewCost ? (
+                                  <>
+                                    <span className="text-[10px] text-surface-500">Puhunan: {formatCurrency(p.cost_price)}</span>
+                                    <span className={`text-[10px] font-semibold px-1 py-0.2 rounded ${
+                                      unitProfit >= 0 ? 'bg-success-500/10 text-success-400' : 'bg-danger-500/10 text-danger-400'
+                                    }`}>
+                                      +{formatCurrency(unitProfit)} ({marginPct}%)
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="text-[10px] text-surface-500 italic">Puhunan: ••••</span>
+                                )}
                               </>
                             )}
                           </div>
@@ -651,33 +873,53 @@ export function ProductsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-700/30">
-                    {products.map(p => {
+                    {displayedProducts.map(p => {
                       const unitProfit = (Number(p.selling_price) || 0) - (Number(p.cost_price) || 0);
                       const marginPct = Number(p.selling_price) > 0 ? ((unitProfit / Number(p.selling_price)) * 100).toFixed(0) : 0;
                       return (
                         <tr key={p.id} className="hover:bg-surface-700/20 transition-colors">
                           <td className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs">
-                            <div className="flex items-center gap-1.5">
-                              <p className="text-surface-100 font-medium truncate">{p.name}</p>
-                              {p.item_type === 'supply' ? (
-                                <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">Supply</span>
-                              ) : (
-                                <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-primary-500/15 text-primary-400 border border-primary-500/30">Product</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-surface-500 flex-wrap">
-                              <span className="font-mono">{p.sku}</span>
-                              {p.supplier_name && (
-                                <>
-                                  <span>•</span>
-                                  <span className="text-emerald-400 font-medium">🏪 {p.supplier_name}</span>
-                                </>
-                              )}
-                              {(p.is_pending || p.id < 0) && (
-                                <span className="px-1 py-0.2 rounded bg-warning-500/20 text-warning-400 text-[9px] font-semibold">
-                                  ⏳ Pending
-                                </span>
-                              )}
+                            <div className="flex items-center gap-2">
+                              {p.image_path && isValidImageUrl(p.image_path) ? (
+                                <img
+                                  src={p.image_path}
+                                  alt={p.name}
+                                  referrerPolicy="no-referrer"
+                                  className="w-8 h-8 rounded-lg object-cover border border-surface-700/60 shrink-0"
+                                  onError={(e) => {
+                                    (e.currentTarget as HTMLElement).style.display = 'none';
+                                    const fallback = (e.currentTarget as HTMLElement).nextElementSibling;
+                                    if (fallback) (fallback as HTMLElement).classList.remove('hidden');
+                                  }}
+                                />
+                              ) : null}
+                              <div className={`w-8 h-8 rounded-lg bg-surface-800/80 border border-surface-700/50 flex items-center justify-center text-sm shrink-0 ${p.image_path && isValidImageUrl(p.image_path) ? 'hidden' : ''}`}>
+                                {getCategoryIcon(p.category_name)}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-surface-100 font-medium truncate">{p.name}</p>
+                                  {p.item_type === 'supply' ? (
+                                    <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">Supply</span>
+                                  ) : (
+                                    <span className="shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-primary-500/15 text-primary-400 border border-primary-500/30">Product</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-surface-500 flex-wrap">
+                                  <span className="font-mono">{p.sku}</span>
+                                  {p.supplier_name && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="text-emerald-400 font-medium">🏪 {p.supplier_name}</span>
+                                    </>
+                                  )}
+                                  {(p.is_pending || p.id < 0) && (
+                                    <span className="px-1 py-0.2 rounded bg-warning-500/20 text-warning-400 text-[9px] font-semibold">
+                                      ⏳ Pending
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           </td>
                           <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-right text-xs font-bold whitespace-nowrap">
@@ -688,7 +930,9 @@ export function ProductsPage() {
                             )}
                           </td>
                           <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-right text-xs whitespace-nowrap hidden sm:table-cell">
-                            {p.item_type === 'supply' ? (
+                            {!canViewCost ? (
+                              <span className="text-surface-500 text-[10px] italic">••••</span>
+                            ) : p.item_type === 'supply' ? (
                               <span className="text-surface-500 text-[10px] italic">N/A</span>
                             ) : (
                               <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.2 rounded ${
@@ -801,14 +1045,61 @@ export function ProductsPage() {
         )}
       </div>
 
+      {/* Business Department Onboarding Modal */}
+      {showDeptModal && (
+        <BusinessDepartmentModal
+          departments={departments}
+          initialDeptToEdit={deptToEdit}
+          onClose={() => {
+            setShowDeptModal(false);
+            setDeptToEdit(null);
+          }}
+          onUpdated={(updatedDepts, activeId) => {
+            setDepartments(updatedDepts);
+            if (activeId) {
+              setSelectedDept(activeId);
+              setFilters(f => ({ ...f, page: 1, category_id: undefined }));
+            }
+            setDeptToEdit(null);
+            loadProducts();
+          }}
+        />
+      )}
+
       {/* Product form modal */}
       {showForm && (
-      <ProductFormModal
+        <ProductFormModal
           product={editingProduct}
           categories={categories}
+          departments={departments}
           existingProducts={products}
+          defaultDept={selectedDept}
+          getDeptOfCategory={getDeptOfCategory}
           onSave={handleSaveProduct}
           onClose={() => { setShowForm(false); setEditingProduct(null); }}
+        />
+      )}
+
+      {/* Excel / CSV Import Modal */}
+      {showImportModal && (
+        <ProductExcelImportModal
+          categories={categories}
+          existingProducts={products}
+          defaultDept={selectedDept}
+          onClose={() => setShowImportModal(false)}
+          onImportDone={() => {
+            loadProducts();
+            setShowImportModal(false);
+          }}
+        />
+      )}
+
+      {/* Barcode & Price Tag Print Modal */}
+      {showBarcodeModal && (
+        <BarcodeLabelModal
+          products={products}
+          categories={categories}
+          onClose={() => setShowBarcodeModal(false)}
         />
       )}
 
@@ -875,15 +1166,30 @@ function generateNextSku(categoryId: number, categories: Category[], existingPro
 // Product Form Modal
 // ============================================================
 
-function ProductFormModal({ product, categories, existingProducts, onSave, onClose }: {
+type RicePackagingType = 'per_kilo' | '5kg' | '25kg';
+
+function detectRicePackaging(p: Product | null): RicePackagingType {
+  if (!p) return 'per_kilo';
+  const n = (p.name || '').toLowerCase();
+  const sku = (p.sku || '').toLowerCase();
+  if (n.includes('25kg') || n.includes('sako') || sku.includes('25kg')) return '25kg';
+  if (n.includes('5kg') || sku.includes('5kg')) return '5kg';
+  return 'per_kilo';
+}
+
+function ProductFormModal({ product, categories, departments, existingProducts, defaultDept, getDeptOfCategory, onSave, onClose }: {
   product: Product | null;
   categories: Category[];
+  departments: BusinessDepartment[];
   existingProducts: Product[];
+  defaultDept?: BusinessType;
+  getDeptOfCategory: (cat: Category) => BusinessType;
   onSave: (data: ProductFormData) => Promise<void>;
   onClose: () => void;
 }) {
   const initialCategoryId = product?.category_id ?? (categories[0]?.id ?? 0);
   const initialSku = product?.sku || generateNextSku(initialCategoryId, categories, existingProducts);
+  const initialDept = product?.business_type || defaultDept || 'barbeque';
 
   const [form, setForm] = useState<ProductFormData>({
     name: product?.name ?? '',
@@ -898,19 +1204,259 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
     initial_stock_date: product?.initial_stock_date ?? product?.created_at?.slice(0, 10) ?? SYSTEM_START_DATE,
     low_stock_threshold: product?.low_stock_threshold ?? 5,
     target_stock: product?.target_stock ?? 20,
-    unit: product?.unit || 'sticks',
+    business_type: initialDept,
+    unit: product?.unit || (initialDept === 'rice' || initialDept === 'vegetables' ? 'kg' : (initialDept === 'groceries' ? 'pcs' : 'sticks')),
+    sell_by_weight: product?.sell_by_weight ?? (initialDept === 'rice' || initialDept === 'vegetables'),
     supplier_id: product?.supplier_id ?? '',
     supplier_name: product?.supplier_name ?? '',
+    image_path: product?.image_path ?? null,
     is_active: product?.is_active ?? true,
   });
+
+  const [imagePreview, setImagePreview] = useState<string | null>(product?.image_path ?? null);
+  const [imageLoading, setImageLoading] = useState(false);
+  const [showCameraModal, setShowCameraModal] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [pasteNotice, setPasteNotice] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageFile = async (file: File | Blob) => {
+    if (!file) return;
+    setImageLoading(true);
+    try {
+      const compressed = await compressImageFile(file, { maxWidth: 280, maxHeight: 280, quality: 0.85 });
+      setImagePreview(compressed);
+      setForm(f => ({ ...f, image_path: compressed }));
+      setPasteNotice('✓ Na-load ang larawan!');
+      setTimeout(() => setPasteNotice(null), 2500);
+    } catch (err) {
+      console.error('Failed to compress image:', err);
+      alert('Hindi ma-proseso ang larawan. Subukan ang ibang picture.');
+    } finally {
+      setImageLoading(false);
+    }
+  };
+
+  const handleImageUrl = async (url: string) => {
+    if (!url) return;
+    setImageLoading(true);
+    try {
+      const compressed = await compressImageUrl(url, { maxWidth: 280, maxHeight: 280, quality: 0.85 });
+      setImagePreview(compressed);
+      setForm(f => ({ ...f, image_path: compressed }));
+      setPasteNotice('✓ Na-load ang larawan!');
+      setTimeout(() => setPasteNotice(null), 2500);
+    } catch (err) {
+      console.error('Failed to process image url:', err);
+      // Fallback: if valid external URL, save directly
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        setImagePreview(url);
+        setForm(f => ({ ...f, image_path: url }));
+        setPasteNotice('✓ Na-load ang larawan mula sa link!');
+        setTimeout(() => setPasteNotice(null), 2500);
+      } else {
+        alert('Hindi ma-load ang imahe. Subukang i-right click sa Google at piliin ang "Copy image", o i-save muna sa computer.');
+      }
+    } finally {
+      setImageLoading(false);
+    }
+  };
+
+  const handleRemoveImage = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setImagePreview(null);
+    setForm(f => ({ ...f, image_path: null }));
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Support Ctrl + V Paste anywhere when this modal is open
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isTextInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
+
+      const clipboard = e.clipboardData;
+      if (!clipboard) return;
+
+      // 1. Check for image files in clipboard (e.g. from Snipping tool, Copy image, screenshots)
+      const items = clipboard.items;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            handleImageFile(file);
+            return;
+          }
+        }
+      }
+
+      // 2. Check for HTML containing <img> (often copied from Google Images or web pages)
+      const html = clipboard.getData('text/html');
+      if (html) {
+        const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (match && match[1]) {
+          e.preventDefault();
+          handleImageUrl(match[1]);
+          return;
+        }
+      }
+
+      // 3. Check for plain text containing an image URL (if not actively typing in an input field)
+      const text = clipboard.getData('text/plain')?.trim();
+      if (text && (text.startsWith('http://') || text.startsWith('https://') || text.startsWith('data:image/'))) {
+        if (!isTextInput && (text.match(/\.(jpeg|jpg|png|webp|gif|svg)(\?.*)?$/i) || text.includes('gstatic.com') || text.includes('googleusercontent.com') || text.startsWith('data:image/'))) {
+          e.preventDefault();
+          handleImageUrl(text);
+        }
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, []);
+
   const isSupply = form.item_type === 'supply';
+  const currentDept = form.business_type || defaultDept || 'barbeque';
+  const isRice = currentDept === 'rice';
+  const isVegetables = currentDept === 'vegetables';
+  const isGroceries = currentDept === 'groceries';
+
+  // Rice packaging variant selection: 'per_kilo' | '5kg' | '25kg'
+  const [ricePackaging, setRicePackaging] = useState<RicePackagingType>(() => detectRicePackaging(product));
+
+  // Multi-variant pricing and stock memory for Rice so switching radio buttons does not lose values
+  const [ricePricing, setRicePricing] = useState<Record<RicePackagingType, {
+    cost: number;
+    selling: number;
+    initialStock: number;
+    currentStock: number;
+  }>>(() => {
+    const initPkg = detectRicePackaging(product);
+    return {
+      per_kilo: {
+        cost: (product && initPkg === 'per_kilo') ? product.cost_price : (product?.cost_price ? Number((product.cost_price / 25).toFixed(2)) : 43),
+        selling: (product && initPkg === 'per_kilo') ? product.selling_price : (product?.selling_price ? Number((product.selling_price / 25).toFixed(2)) : 54),
+        initialStock: (product && initPkg === 'per_kilo') ? (product.initial_stock ?? product.current_stock ?? 50) : 50,
+        currentStock: (product && initPkg === 'per_kilo') ? product.current_stock : 50,
+      },
+      '5kg': {
+        cost: (product && initPkg === '5kg') ? product.cost_price : (product?.cost_price ? Number((product.cost_price / 5).toFixed(2)) : 214),
+        selling: (product && initPkg === '5kg') ? product.selling_price : (product?.selling_price ? Number((product.selling_price / 5).toFixed(2)) : 270),
+        initialStock: (product && initPkg === '5kg') ? (product.initial_stock ?? product.current_stock ?? 5) : 5,
+        currentStock: (product && initPkg === '5kg') ? product.current_stock : 5,
+      },
+      '25kg': {
+        cost: (product && initPkg === '25kg') ? product.cost_price : (product?.cost_price ? product.cost_price : 1070),
+        selling: (product && initPkg === '25kg') ? product.selling_price : (product?.selling_price ? product.selling_price : 1350),
+        initialStock: (product && initPkg === '25kg') ? (product.initial_stock ?? product.current_stock ?? 2) : 2,
+        currentStock: (product && initPkg === '25kg') ? product.current_stock : 2,
+      },
+    };
+  });
+
+  // Bulto / Bundle Cost & Buying Qty calculator (especially for Groceries)
+  const [bundleCost, setBundleCost] = useState<number | ''>('');
+  const [bundleQty, setBundleQty] = useState<number | ''>('');
+
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
   useEffect(() => {
-    getAllSuppliers().then(s => setSuppliers(s.filter(sup => sup.is_active))).catch(() => {});
-  }, []);
+    getAllSuppliers().then(s => {
+      const activeSups = s.filter(sup => sup.is_active);
+      setSuppliers(activeSups);
+
+      // Auto-assign default supplier if empty and creating a new product
+      if (!product && !form.supplier_id) {
+        if (currentDept === 'rice') {
+          const rSup = activeSups.find(sup => sup.id === 'sup-rice-bocaue' || sup.name.toLowerCase().includes('bocaue'));
+          if (rSup) setForm(f => ({ ...f, supplier_id: rSup.id, supplier_name: rSup.name }));
+        } else if (currentDept === 'vegetables') {
+          const vSup = activeSups.find(sup => sup.id === 'sup-veg-bagsakan' || sup.name.toLowerCase().includes('bagsakan'));
+          if (vSup) setForm(f => ({ ...f, supplier_id: vSup.id, supplier_name: vSup.name }));
+        } else if (currentDept === 'groceries') {
+          const gSup = activeSups.find(sup => sup.id === 'sup-groc-puregold' || sup.name.toLowerCase().includes('puregold'));
+          if (gSup) setForm(f => ({ ...f, supplier_id: gSup.id, supplier_name: gSup.name }));
+        }
+      }
+    }).catch(() => {});
+  }, [currentDept]);
+
+  // Handle rice packaging radio button selection
+  const handleSelectRicePackaging = (pkg: RicePackagingType) => {
+    setRicePackaging(pkg);
+    const pData = ricePricing[pkg];
+    const isWeight = pkg === 'per_kilo';
+    const u = pkg === 'per_kilo' ? 'kg' : (pkg === '5kg' ? 'pack' : 'sako');
+    setForm(f => ({
+      ...f,
+      cost_price: pData.cost,
+      selling_price: pData.selling,
+      initial_stock: pData.initialStock,
+      current_stock: pData.currentStock,
+      unit: u,
+      sell_by_weight: isWeight,
+    }));
+  };
+
+  // Handle department change with supplier & unit auto-defaults
+  const handleDeptChange = (newDept: string) => {
+    const newDeptCats = categories.filter(c => getDeptOfCategory(c) === newDept);
+    const firstCatId = newDeptCats[0]?.id || 1;
+
+    let defaultUnit = 'sticks';
+    let defaultWeight = false;
+    let defSupId = form.supplier_id;
+    let defSupName = form.supplier_name;
+
+    if (newDept === 'rice') {
+      defaultUnit = ricePackaging === 'per_kilo' ? 'kg' : (ricePackaging === '5kg' ? 'pack' : 'sako');
+      defaultWeight = ricePackaging === 'per_kilo';
+      const rSup = suppliers.find(s => s.id === 'sup-rice-bocaue' || s.name.toLowerCase().includes('bocaue'));
+      if (rSup) { defSupId = rSup.id; defSupName = rSup.name; }
+    } else if (newDept === 'vegetables') {
+      defaultUnit = 'kg';
+      defaultWeight = true;
+      const vSup = suppliers.find(s => s.id === 'sup-veg-bagsakan' || s.name.toLowerCase().includes('bagsakan'));
+      if (vSup) { defSupId = vSup.id; defSupName = vSup.name; }
+    } else if (newDept === 'groceries') {
+      defaultUnit = 'pcs';
+      defaultWeight = false;
+      const gSup = suppliers.find(s => s.id === 'sup-groc-puregold' || s.name.toLowerCase().includes('puregold'));
+      if (gSup) { defSupId = gSup.id; defSupName = gSup.name; }
+    } else if (newDept === 'barbeque') {
+      defaultUnit = 'sticks';
+      defaultWeight = false;
+      const bSup = suppliers.find(s => s.name.toLowerCase().includes('bbq'));
+      if (bSup) { defSupId = bSup.id; defSupName = bSup.name; }
+    }
+
+    setForm(f => ({
+      ...f,
+      business_type: newDept,
+      category_id: firstCatId,
+      unit: defaultUnit,
+      sell_by_weight: defaultWeight,
+      supplier_id: defSupId,
+      supplier_name: defSupName,
+      sku: !product ? generateNextSku(firstCatId, categories, existingProducts) : f.sku,
+    }));
+  };
+
+  // Handle vegetables unit toggle: kg vs pcs
+  const handleSelectVegUnit = (unit: 'kg' | 'pcs') => {
+    const isWeight = unit === 'kg';
+    setForm(f => ({
+      ...f,
+      unit: unit,
+      sell_by_weight: isWeight,
+      initial_stock: isWeight ? f.initial_stock : Math.round(f.initial_stock ?? 0),
+      current_stock: isWeight ? f.current_stock : Math.round(f.current_stock ?? 0),
+    }));
+  };
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -922,10 +1468,31 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
       setFormError('Selling price is required for Products. For internal supplies/ingredients, choose "Supply" type instead.');
       return;
     }
+
+    let finalName = form.name.trim();
+    if (isRice) {
+      // Ensure the packaging variant suffix is cleanly formatted
+      const base = finalName
+        .replace(/\s*-\s*(per\s*kilo|kilo|5kg(\s*pack)?|25kg(\s*sako)?)/gi, '')
+        .trim();
+      if (ricePackaging === 'per_kilo') {
+        finalName = `${base} - per Kilo`;
+      } else if (ricePackaging === '5kg') {
+        finalName = `${base} - 5kg Pack`;
+      } else if (ricePackaging === '25kg') {
+        finalName = `${base} - 25kg Sako`;
+      }
+    }
+
     setSaving(true);
     setFormError(null);
     try {
-      await onSave(form);
+      await onSave({
+        ...form,
+        name: finalName,
+        initial_stock: form.initial_stock ?? form.current_stock ?? 0,
+        current_stock: form.current_stock ?? form.initial_stock ?? 0,
+      });
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Save failed');
     } finally {
@@ -986,6 +1553,126 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* ── Product Photo Uploader (Marites POS style with Drag & Drop + Paste + Real Live Camera) ── */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file && file.type.startsWith('image/')) {
+                handleImageFile(file);
+                return;
+              }
+              const html = e.dataTransfer.getData('text/html');
+              if (html) {
+                const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+                if (match && match[1]) {
+                  handleImageUrl(match[1]);
+                  return;
+                }
+              }
+              const uri = e.dataTransfer.getData('text/uri-list');
+              if (uri && (uri.startsWith('http://') || uri.startsWith('https://'))) {
+                handleImageUrl(uri);
+              }
+            }}
+            className={`p-3 rounded-2xl border transition-all flex items-center gap-3.5 ${
+              isDragging
+                ? 'bg-primary-500/15 border-primary-500 ring-2 ring-primary-500/30'
+                : 'bg-surface-900/60 border-surface-700/60'
+            }`}
+          >
+            {/* Clickable Image Box / Drop Target (Click opens file picker, Drag & Drop, Ctrl+V) */}
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className="relative w-20 h-20 rounded-xl bg-surface-800 border-2 border-dashed border-surface-600 hover:border-primary-500 flex items-center justify-center overflow-hidden shrink-0 group cursor-pointer shadow-inner transition-colors"
+              title="I-click para pumili ng picture, o i-Paste (Ctrl+V)"
+            >
+              {imageLoading ? (
+                <div className="w-6 h-6 border-2 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
+              ) : imagePreview && isValidImageUrl(imagePreview) ? (
+                <>
+                  <img
+                    src={imagePreview}
+                    alt="Preview"
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                    onError={() => {
+                      setImagePreview(null);
+                      setForm(f => ({ ...f, image_path: null }));
+                    }}
+                  />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold">
+                    Palitan
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveImage}
+                    className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/75 hover:bg-rose-600 text-white flex items-center justify-center text-xs cursor-pointer shadow-md transition-colors z-10"
+                    title="Tanggalin ang picture"
+                  >
+                    ✕
+                  </button>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center text-surface-400 group-hover:text-primary-400 p-1 text-center select-none">
+                  <span className="text-2xl">🖼️</span>
+                  <span className="text-[9px] font-bold mt-0.5">Pumili / Paste</span>
+                </div>
+              )}
+            </div>
+
+            {/* Instruction and Camera Action (No redundant file button!) */}
+            <div className="flex-1 min-w-0 space-y-1">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-surface-100">Larawan ng Produkto (Product Image)</p>
+                {pasteNotice && (
+                  <span className="text-[10px] font-bold text-emerald-400 animate-fade-in">{pasteNotice}</span>
+                )}
+              </div>
+              <p className="text-[11px] text-surface-400 leading-tight">
+                I-click ang kahon, i-drag ang picture, o i-<strong>Paste (Ctrl + V)</strong> mula sa clipboard o Google Images.
+              </p>
+
+              {/* Only the Live Camera Action and Remove Image button */}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowCameraModal(true)}
+                  className="px-3 py-1.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-sm active:scale-95"
+                  title="Buksan ang webcam o camera para kuhanan ng picture ang produkto"
+                >
+                  <span>📸</span>
+                  <span>Kunan gamit ang Camera</span>
+                </button>
+
+                {imagePreview && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveImage}
+                    className="px-2.5 py-1.5 rounded-xl bg-surface-800 hover:bg-rose-500/20 text-surface-400 hover:text-rose-400 border border-surface-700 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <span>🗑️</span>
+                    <span>Alisin</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Hidden file input for box click */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImageFile(file);
+                }}
+                className="hidden"
+              />
+            </div>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             <FormField label="Product Name *">
               <input
@@ -993,7 +1680,7 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
                 value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                 className="form-input"
-                placeholder="e.g., Pork BBQ (Large)"
+                placeholder={isRice ? "e.g., Buko Pandan (PREMIUM)" : isVegetables ? "e.g., Kamatis (Regular)" : "e.g., Pork BBQ (Large)"}
                 required
               />
             </FormField>
@@ -1021,28 +1708,51 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
             </FormField>
           </div>
 
-          <FormField label="Category">
-            <select
-              value={form.category_id}
-              onChange={e => {
-                const newCatId = Number(e.target.value);
-                setForm(f => {
-                  const newSku = !product ? generateNextSku(newCatId, categories, existingProducts) : f.sku;
-                  return { ...f, category_id: newCatId, sku: newSku };
-                });
-              }}
-              className="form-input"
-            >
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </FormField>
+          {/* ── 2-Level Cascading Selector: Linya ng Negosyo ➔ Kategorya ── */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 p-3 rounded-xl bg-surface-900/60 border border-surface-700/60">
+            <FormField label="Linya ng Negosyo (Business Line) *">
+              <select
+                value={form.business_type || defaultDept || 'barbeque'}
+                onChange={e => handleDeptChange(e.target.value)}
+                className="form-input font-bold text-primary-300"
+              >
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>
+                    {d.icon} {d.label}
+                  </option>
+                ))}
+              </select>
+            </FormField>
 
-          <FormField label="Description">
-            <textarea value={form.description ?? ''} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="form-input" rows={2} placeholder="Optional description" />
-          </FormField>
+            <FormField label="Kategorya *">
+              <select
+                value={form.category_id}
+                onChange={e => {
+                  const newCatId = Number(e.target.value);
+                  setForm(f => {
+                    const newSku = !product ? generateNextSku(newCatId, categories, existingProducts) : f.sku;
+                    return { ...f, category_id: newCatId, sku: newSku };
+                  });
+                }}
+                className="form-input font-medium"
+              >
+                {categories.filter(c => getDeptOfCategory(c) === (form.business_type || defaultDept || 'barbeque')).length === 0 ? (
+                  <option value={0}>— Walang kategorya sa negosyong ito —</option>
+                ) : (
+                  categories
+                    .filter(c => getDeptOfCategory(c) === (form.business_type || defaultDept || 'barbeque'))
+                    .map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))
+                )}
+              </select>
+            </FormField>
+          </div>
 
-          {/* Supplier Assignment */}
-          <FormField label="Supplier (Pinagkukunan)">
+          {/* Supplier Assignment Dropdown */}
+          <FormField label="Supplier (Pinagkukunan / Bagsakan)">
             <select
               value={form.supplier_id ?? ''}
               onChange={e => {
@@ -1058,12 +1768,217 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
               ))}
             </select>
             {form.supplier_name && (
-              <p className="text-[11px] text-emerald-400 mt-1">✅ Nakita: {form.supplier_name}</p>
+              <p className="text-[11px] text-emerald-400 mt-1">✅ Supplier: {form.supplier_name}</p>
             )}
           </FormField>
 
+          {/* ===================================================================== */}
+          {/* 🍚 BIGASAN BUSINESS SPECIFIC SECTION: Radio Button (per kilo, 5kg, 25kg) */}
+          {/* ===================================================================== */}
+          {isRice && (
+            <div className="p-3.5 rounded-xl bg-yellow-500/10 border border-yellow-500/30 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-yellow-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🍚</span> Uri ng Pagbabalot / Packaging (Pumili):
+                </span>
+                <span className="text-[10px] text-yellow-400/80 bg-yellow-500/20 px-2 py-0.5 rounded-full font-semibold">
+                  Bigasan Mode
+                </span>
+              </div>
+
+              {/* Radio Button Options */}
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'per_kilo', label: 'per kilo', desc: 'Tingi / Kilo', badge: 'Decimal (kg)', icon: '⚖️' },
+                  { id: '5kg', label: '5kg Pack', desc: '5 Kilo Bag', badge: 'Whole pcs', icon: '🛍️' },
+                  { id: '25kg', label: '25kg Sako', desc: 'Buong Sako', badge: 'Whole pcs', icon: '🌾' },
+                ].map(opt => {
+                  const isSelected = ricePackaging === opt.id;
+                  return (
+                    <label
+                      key={opt.id}
+                      onClick={() => handleSelectRicePackaging(opt.id as RicePackagingType)}
+                      className={`flex flex-col items-center justify-between p-2.5 rounded-xl border-2 transition-all cursor-pointer text-center ${
+                        isSelected
+                          ? 'border-yellow-400 bg-yellow-500/20 text-yellow-200 shadow-md shadow-yellow-500/10'
+                          : 'border-surface-700 bg-surface-900/60 text-surface-400 hover:border-surface-600'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="rice_packaging"
+                        value={opt.id}
+                        checked={isSelected}
+                        onChange={() => handleSelectRicePackaging(opt.id as RicePackagingType)}
+                        className="sr-only"
+                      />
+                      <span className="text-lg mb-0.5">{opt.icon}</span>
+                      <span className="text-xs font-bold text-surface-100">{opt.label}</span>
+                      <span className="text-[10px] text-surface-400 leading-tight">{opt.desc}</span>
+                      <span className={`text-[9px] font-semibold mt-1 px-1.5 py-0.2 rounded ${
+                        isSelected ? 'bg-yellow-400/30 text-yellow-200' : 'bg-surface-800 text-surface-500'
+                      }`}>
+                        {opt.badge}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <p className="text-[11px] text-yellow-300/80 bg-surface-900/80 px-2.5 py-1.5 rounded-lg border border-yellow-500/20">
+                💡 Ang <strong>{ricePackaging === 'per_kilo' ? 'per kilo (Tingi)' : ricePackaging === '5kg' ? '5kg Pack' : '25kg Sako'}</strong> ay may sariling Puhunan, Benta, at Stocks. Naka-save ang bawat packaging nang hiwalay.
+              </p>
+            </div>
+          )}
+
+          {/* ===================================================================== */}
+          {/* 🥬 GULAYAN BUSINESS SPECIFIC SECTION: Per Unit (pcs vs kg)             */}
+          {/* ===================================================================== */}
+          {isVegetables && (
+            <div className="p-3.5 rounded-xl bg-green-500/10 border border-green-500/30 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-green-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🥬</span> Yunit ng Pagbenta (Per Unit):
+                </span>
+                <span className="text-[10px] text-green-400/80 bg-green-500/20 px-2 py-0.5 rounded-full font-semibold">
+                  Gulayan Mode
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSelectVegUnit('kg')}
+                  className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border-2 transition-all cursor-pointer ${
+                    form.unit === 'kg'
+                      ? 'border-green-400 bg-green-500/20 text-green-200 font-bold shadow-md shadow-green-500/10'
+                      : 'border-surface-700 bg-surface-900/60 text-surface-400 hover:border-surface-600'
+                  }`}
+                >
+                  <span className="text-lg">⚖️</span>
+                  <div className="text-left">
+                    <div className="text-xs font-bold">Kilo (kg)</div>
+                    <div className="text-[10px] opacity-75">Tinitimbang (Decimal)</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectVegUnit('pcs')}
+                  className={`flex items-center justify-center gap-2 p-2.5 rounded-xl border-2 transition-all cursor-pointer ${
+                    form.unit !== 'kg'
+                      ? 'border-green-400 bg-green-500/20 text-green-200 font-bold shadow-md shadow-green-500/10'
+                      : 'border-surface-700 bg-surface-900/60 text-surface-400 hover:border-surface-600'
+                  }`}
+                >
+                  <span className="text-lg">🌿</span>
+                  <div className="text-left">
+                    <div className="text-xs font-bold">Piraso / Tali (pcs)</div>
+                    <div className="text-[10px] opacity-75">Binibilang (Whole no.)</div>
+                  </div>
+                </button>
+              </div>
+
+              <p className="text-[11px] text-green-300/80 bg-surface-900/80 px-2.5 py-1.5 rounded-lg border border-green-500/20">
+                {form.unit === 'kg'
+                  ? '⚖️ Kilo mode: Pwede ang may decimal tulad ng 0.25 kg, 0.5 kg, o 1.75 kg sa POS at Inventory.'
+                  : '🌿 Piraso/Tali mode: Buong bilang lamang (1, 2, 3...) at walang decimal.'}
+              </p>
+            </div>
+          )}
+
+          {/* ===================================================================== */}
+          {/* 📦 BULTO/PACK CALCULATOR: Cost Price (Bulto) & Buying Qty               */}
+          {/* ===================================================================== */}
+          {!isRice && !isVegetables && (
+            <div className="p-3 rounded-xl bg-surface-900/80 border border-surface-700/60 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-surface-200 flex items-center gap-1.5">
+                  <span>📦</span> Bulto / Pack Calculator (Opsyonal):
+                </span>
+                <span className="text-[10px] text-surface-400">
+                  Auto-compute sa Cost per pc
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[11px] font-semibold text-surface-400 mb-1">
+                    Cost Price (Bili sa Bulto / Pack)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-500 text-xs">₱</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={bundleCost}
+                      onChange={e => {
+                        const val = e.target.value === '' ? '' : parseFloat(e.target.value) || 0;
+                        setBundleCost(val);
+                        if (val !== '' && typeof bundleQty === 'number' && bundleQty > 0) {
+                          const perPc = parseFloat((val / bundleQty).toFixed(2));
+                          setForm(f => ({ ...f, cost_price: perPc }));
+                        }
+                      }}
+                      placeholder="hal. 235.00"
+                      className="form-input pl-6 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-surface-400 mb-1">
+                    Buying Qty (Dami sa Bulto)
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    min="1"
+                    value={bundleQty}
+                    onChange={e => {
+                      const val = e.target.value === '' ? '' : parseInt(e.target.value) || 0;
+                      setBundleQty(val);
+                      if (val !== '' && val > 0 && typeof bundleCost === 'number' && bundleCost > 0) {
+                        const perPc = parseFloat((bundleCost / val).toFixed(2));
+                        setForm(f => ({
+                          ...f,
+                          cost_price: perPc,
+                          initial_stock: f.initial_stock === 0 ? val : f.initial_stock,
+                          current_stock: f.current_stock === 0 ? val : f.current_stock,
+                        }));
+                      }
+                    }}
+                    placeholder="hal. 12 pcs"
+                    className="form-input text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Cost Price & Selling Price Inputs ── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-            <FormField label="Cost Price (Puhunan) *">
+            <FormField
+              label={
+                isRice
+                  ? `Puhunan (${ricePackaging === 'per_kilo' ? 'bawat Kilo' : ricePackaging === '5kg' ? 'bawat 5kg Pack' : 'bawat 25kg Sako'}) *`
+                  : isVegetables
+                  ? `Puhunan (${form.unit === 'kg' ? 'bawat Kilo' : 'bawat Piraso/Tali'}) *`
+                  : 'Cost per pc (Puhunan Bawat Piraso) *'
+              }
+              hint={
+                typeof bundleCost === 'number' && typeof bundleQty === 'number' && bundleQty > 0
+                  ? `₱${bundleCost} ÷ ${bundleQty} pcs`
+                  : isRice && ricePackaging === 'per_kilo'
+                  ? 'hal. ₱43.00'
+                  : isRice && ricePackaging === '5kg'
+                  ? 'hal. ₱214.00'
+                  : isRice && ricePackaging === '25kg'
+                  ? 'hal. ₱1,070.00'
+                  : undefined
+              }
+            >
               <input
                 type="number"
                 step="0.01"
@@ -1073,13 +1988,20 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
                 onFocus={e => e.target.select()}
                 onClick={e => (e.target as HTMLInputElement).select()}
                 onChange={e => {
-                  const val = e.target.value;
-                  setForm(f => ({ ...f, cost_price: val === '' ? 0 : parseFloat(val) || 0 }));
+                  const val = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                  setForm(f => ({ ...f, cost_price: val }));
+                  if (isRice) {
+                    setRicePricing(prev => ({
+                      ...prev,
+                      [ricePackaging]: { ...prev[ricePackaging], cost: val },
+                    }));
+                  }
                 }}
                 className="form-input"
                 required
               />
             </FormField>
+
             {isSupply ? (
               <FormField label="Selling Price" hint="Hindi applicable sa Supply type">
                 <div className="form-input bg-surface-900/60 text-surface-500 italic text-sm flex items-center gap-2">
@@ -1087,7 +2009,16 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
                 </div>
               </FormField>
             ) : (
-              <FormField label="Selling Price (Benta sa POS) *">
+              <FormField
+                label={
+                  isRice
+                    ? `Benta sa POS (${ricePackaging === 'per_kilo' ? 'bawat Kilo' : ricePackaging === '5kg' ? 'bawat 5kg Pack' : 'bawat 25kg Sako'}) *`
+                    : isVegetables
+                    ? `Benta sa POS (${form.unit === 'kg' ? 'bawat Kilo' : 'bawat Piraso/Tali'}) *`
+                    : 'Selling Price (Benta sa POS) *'
+                }
+                hint={isRice && ricePackaging === 'per_kilo' ? 'hal. ₱54.00' : isRice && ricePackaging === '5kg' ? 'hal. ₱270.00' : isRice && ricePackaging === '25kg' ? 'hal. ₱1,350.00' : undefined}
+              >
                 <input
                   type="number"
                   step="0.01"
@@ -1097,8 +2028,14 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
                   onFocus={e => e.target.select()}
                   onClick={e => (e.target as HTMLInputElement).select()}
                   onChange={e => {
-                    const val = e.target.value;
-                    setForm(f => ({ ...f, selling_price: val === '' ? 0 : parseFloat(val) || 0 }));
+                    const val = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                    setForm(f => ({ ...f, selling_price: val }));
+                    if (isRice) {
+                      setRicePricing(prev => ({
+                        ...prev,
+                        [ricePackaging]: { ...prev[ricePackaging], selling: val },
+                      }));
+                    }
                   }}
                   className="form-input"
                   required
@@ -1107,60 +2044,159 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
             )}
           </div>
 
-          {/* Target Par Stock, Low Stock Alert, & Unit */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-            <FormField label="Target Par Stock (Prep Limit)">
+          {/* Live Profit & Margin Indicator */}
+          {!isSupply && form.selling_price > 0 && form.cost_price > 0 && (
+            <div className="text-[11px] font-bold text-emerald-400 flex items-center justify-between px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+              <span className="flex items-center gap-1.5">
+                <span>💰</span>
+                <span>Kita bawat piraso: {formatCurrency(form.selling_price - form.cost_price)}</span>
+              </span>
+              <span className="bg-emerald-500/20 px-2 py-0.5 rounded-full text-emerald-300">
+                +{(((form.selling_price - form.cost_price) / form.selling_price) * 100).toFixed(1)}% margin
+              </span>
+            </div>
+          )}
+
+          {/* ── Initial Stocks & Remaining Stocks Inputs ── */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 p-3 rounded-xl bg-surface-900/40 border border-surface-700/50">
+            <FormField
+              label={
+                isRice
+                  ? `Panimulang Stock (Initial - ${ricePackaging === 'per_kilo' ? 'Kilo' : ricePackaging === '5kg' ? '5kg Packs' : 'Sako'})`
+                  : isVegetables
+                  ? `Panimulang Stock (${form.unit === 'kg' ? 'Kilo' : 'Piraso/Tali'})`
+                  : 'Panimulang Stock (Initial Stock)'
+              }
+              hint={
+                (isRice && ricePackaging === 'per_kilo') || (isVegetables && form.unit === 'kg')
+                  ? 'Decimal (hal. 25.00 o 50.00 kg)'
+                  : 'Buong bilang (hal. 80 pcs o 5 sako)'
+              }
+            >
               <input
                 type="number"
+                step={(isRice && ricePackaging === 'per_kilo') || (isVegetables && form.unit === 'kg') ? "0.01" : "1"}
+                min="0"
+                value={form.initial_stock === 0 ? '' : (form.initial_stock ?? 0)}
+                placeholder="0"
+                onFocus={e => e.target.select()}
+                onClick={e => (e.target as HTMLInputElement).select()}
+                onChange={e => {
+                  const val = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                  setForm(f => ({ ...f, initial_stock: val }));
+                  if (isRice) {
+                    setRicePricing(prev => ({
+                      ...prev,
+                      [ricePackaging]: { ...prev[ricePackaging], initialStock: val },
+                    }));
+                  }
+                }}
+                className="form-input"
+              />
+            </FormField>
+
+            <FormField
+              label={
+                isRice
+                  ? `Kasalukuyang Stock (Remaining - ${ricePackaging === 'per_kilo' ? 'Kilo' : ricePackaging === '5kg' ? '5kg Packs' : 'Sako'})`
+                  : isVegetables
+                  ? `Kasalukuyang Stock (${form.unit === 'kg' ? 'Kilo' : 'Piraso/Tali'})`
+                  : 'Kasalukuyang Stock (Remaining / On-Hand)'
+              }
+              hint={
+                (isRice && ricePackaging === 'per_kilo') || (isVegetables && form.unit === 'kg')
+                  ? 'Aktwal na natira (hal. 24.50 kg)'
+                  : 'Aktwal na natira (hal. 80 pcs o 4 sako)'
+              }
+            >
+              <input
+                type="number"
+                step={(isRice && ricePackaging === 'per_kilo') || (isVegetables && form.unit === 'kg') ? "0.01" : "1"}
+                min="0"
+                value={form.current_stock === 0 ? '' : (form.current_stock ?? 0)}
+                placeholder="0"
+                onFocus={e => e.target.select()}
+                onClick={e => (e.target as HTMLInputElement).select()}
+                onChange={e => {
+                  const val = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                  setForm(f => ({ ...f, current_stock: val }));
+                  if (isRice) {
+                    setRicePricing(prev => ({
+                      ...prev,
+                      [ricePackaging]: { ...prev[ricePackaging], currentStock: val },
+                    }));
+                  }
+                }}
+                className="form-input"
+              />
+            </FormField>
+          </div>
+
+          {/* Unit Selector for Groceries & Barbeque (Non-Rice, Non-Vegetables) */}
+          {!isRice && !isVegetables && (
+            <FormField label="Unit (Yunit ng Paninda)">
+              <select
+                value={form.unit || (isGroceries ? 'pcs' : 'sticks')}
+                onChange={e => setForm(f => ({ ...f, unit: e.target.value }))}
+                className="form-input cursor-pointer"
+              >
+                <option value="pcs">pcs (Pirasaso / Repacked Pack)</option>
+                <option value="pack">pack (Balot)</option>
+                <option value="sticks">sticks (Tuhog)</option>
+                <option value="bottle">bottle (Bote)</option>
+                <option value="can">can / lata (Lata)</option>
+                <option value="box">box (Kahon)</option>
+              </select>
+            </FormField>
+          )}
+
+          {/* Target Par Stock (Prep Limit) & Low Stock Warning */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            <FormField label="Target Par Stock (Prep Limit / Ideal Order)">
+              <input
+                type="number"
+                step={(isRice && ricePackaging === 'per_kilo') || (isVegetables && form.unit === 'kg') ? "0.01" : "1"}
                 min="0"
                 value={form.target_stock === 0 ? '' : (form.target_stock ?? 20)}
                 placeholder="20"
                 onFocus={e => e.target.select()}
                 onClick={e => (e.target as HTMLInputElement).select()}
                 onChange={e => {
-                  const val = e.target.value;
-                  setForm(f => ({ ...f, target_stock: val === '' ? 0 : parseInt(val) || 0 }));
+                  const val = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                  setForm(f => ({ ...f, target_stock: val }));
                 }}
                 className="form-input"
                 title="Ideal stock quantity for replenishment"
               />
             </FormField>
 
-            <FormField label="Low Stock Warning">
+            <FormField label="Low Stock Warning Limit">
               <input
                 type="number"
+                step={(isRice && ricePackaging === 'per_kilo') || (isVegetables && form.unit === 'kg') ? "0.01" : "1"}
                 min="0"
                 value={form.low_stock_threshold === 0 ? '' : (form.low_stock_threshold ?? 5)}
                 placeholder="5"
                 onFocus={e => e.target.select()}
                 onClick={e => (e.target as HTMLInputElement).select()}
                 onChange={e => {
-                  const val = e.target.value;
-                  setForm(f => ({ ...f, low_stock_threshold: val === '' ? 0 : parseInt(val) || 0 }));
+                  const val = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                  setForm(f => ({ ...f, low_stock_threshold: val }));
                 }}
                 className="form-input"
                 title="Alert limit when stock drops"
               />
             </FormField>
-
-            <FormField label="Unit (Yunit)">
-              <select
-                value={form.unit || 'sticks'}
-                onChange={e => setForm(f => ({ ...f, unit: e.target.value }))}
-                className="form-input cursor-pointer"
-              >
-                <option value="sticks">sticks (Tuhog)</option>
-                <option value="pcs">pcs (Pirasaso)</option>
-                <option value="bottle">bottle (Bote)</option>
-                <option value="pack">pack (Balot)</option>
-              </select>
-            </FormField>
           </div>
+
+          <FormField label="Description (Opsyonal)">
+            <textarea value={form.description ?? ''} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="form-input" rows={2} placeholder="Opsyonal na detalye o notes..." />
+          </FormField>
 
           {/* Live Profit Preview - only show for Products */}
           {!isSupply && (
             <div className="p-3 rounded-xl bg-surface-900/60 border border-surface-700/50 flex items-center justify-between text-xs sm:text-sm">
-              <span className="text-surface-400">Estimated Profit per Piece:</span>
+              <span className="text-surface-400">Tantiya ng Tubo (Estimated Profit):</span>
               <span className={`font-semibold ${form.selling_price - form.cost_price >= 0 ? 'text-success-400' : 'text-danger-400'}`}>
                 {formatCurrency(form.selling_price - form.cost_price)}
                 {form.selling_price > 0 && ` (${(((form.selling_price - form.cost_price) / form.selling_price) * 100).toFixed(1)}% margin)`}
@@ -1190,6 +2226,12 @@ function ProductFormModal({ product, categories, existingProducts, onSave, onClo
             </button>
           </div>
         </form>
+
+        <ProductCameraCaptureModal
+          isOpen={showCameraModal}
+          onClose={() => setShowCameraModal(false)}
+          onCapture={handleImageFile}
+        />
       </div>
     </div>,
     document.body

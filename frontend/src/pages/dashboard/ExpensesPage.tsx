@@ -1,5 +1,7 @@
 /**
- * Expenses Page - Expense tracking with CRUD
+ * Master Expense Report & Audit Ledger
+ * Pangkalahatang talaan, pagsusuri, at audit trail ng lahat ng operational expenses,
+ * pondo, at petty cash ng tindahan.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -13,13 +15,7 @@ import { formatDate, getTodayStr, SYSTEM_START_DATE } from '../../utils/date';
 import type { Expense } from '../../types/inventory';
 
 export function ExpensesPage() {
-  const [expenses, setExpenses] = useState<(Expense & { is_pending?: boolean })[]>([]);
-  const [pagination, setPagination] = useState({ total: 0, page: 1, per_page: 15, total_pages: 0 });
-  const [filters, setFilters] = useState(() => {
-    const today = getTodayStr();
-    const start = today < SYSTEM_START_DATE ? SYSTEM_START_DATE : today;
-    return { page: 1, per_page: 15, date_from: start, date_to: start };
-  });
+  const [allExpenses, setAllExpenses] = useState<(Expense & { is_pending?: boolean })[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [noticeMsg, setNoticeMsg] = useState<string | null>(null);
@@ -27,54 +23,239 @@ export function ExpensesPage() {
   const [editing, setEditing] = useState<Expense | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<Expense | null>(null);
 
-  // Layout & View Switcher States
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>('table');
+  // Filters
+  const [dateFrom, setDateFrom] = useState(() => {
+    const today = getTodayStr();
+    return today < SYSTEM_START_DATE ? SYSTEM_START_DATE : today;
+  });
+  const [dateTo, setDateTo] = useState(() => {
+    const today = getTodayStr();
+    return today < SYSTEM_START_DATE ? SYSTEM_START_DATE : today;
+  });
+  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  const [selectedSource, setSelectedSource] = useState<'ALL' | 'DRAWER' | 'POCKET'>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(25);
+
+  // Quick-add pills toggle
   const [showQuickPills, setShowQuickPills] = useState(false);
 
   const loadExpenses = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      // Try fetching from server first
+      // 1. Fetch comprehensive list from server (up to 1,000 for full reporting)
       const res = await fetchExpenses({
-        page: filters.page,
-        per_page: filters.per_page,
-        date_from: filters.date_from || undefined,
-        date_to: filters.date_to || undefined,
+        page: 1,
+        per_page: 1000,
       });
-      await replaceAllExpenses(res.data);
+      if (res.data && res.data.length > 0) {
+        await replaceAllExpenses(res.data);
+      }
       const localAll = await getAllExpenses();
-      const pendingItems = localAll.filter(e => e.id < 0 || e.is_pending);
-      // Combine pending offline expenses at the top
-      setExpenses([...pendingItems, ...res.data]);
-      setPagination(res.pagination);
+      setAllExpenses(localAll);
     } catch {
-      // If server unreachable, load from local IndexedDB
+      // 2. Offline fallback: read from IndexedDB
       try {
         const localAll = await getAllExpenses();
-        let filtered = localAll;
-        if (filters.date_from) {
-          filtered = filtered.filter(e => e.expense_date >= filters.date_from);
-        }
-        if (filters.date_to) {
-          filtered = filtered.filter(e => e.expense_date <= filters.date_to);
-        }
-        setExpenses(filtered);
-        setPagination({
-          page: 1,
-          per_page: filtered.length || 15,
-          total: filtered.length,
-          total_pages: 1,
-        });
+        setAllExpenses(localAll);
       } catch (localErr) {
-        setError(localErr instanceof Error ? localErr.message : 'Failed to load expenses');
+        setError(localErr instanceof Error ? localErr.message : 'Nabigong kunin ang mga tala ng gastos');
       }
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, []);
 
-  useEffect(() => { loadExpenses(); }, [loadExpenses]);
+  useEffect(() => {
+    loadExpenses();
+  }, [loadExpenses]);
+
+  // Date Preset Handlers
+  const handleSetPreset = (preset: 'today' | 'yesterday' | 'this_week' | 'this_month' | 'all') => {
+    const today = getTodayStr();
+    setCurrentPage(1);
+
+    if (preset === 'today') {
+      const start = today < SYSTEM_START_DATE ? SYSTEM_START_DATE : today;
+      setDateFrom(start);
+      setDateTo(start);
+    } else if (preset === 'yesterday') {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      const yStr = d.toISOString().split('T')[0];
+      const start = yStr < SYSTEM_START_DATE ? SYSTEM_START_DATE : yStr;
+      setDateFrom(start);
+      setDateTo(start);
+    } else if (preset === 'this_week') {
+      const now = new Date();
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday
+      const monday = new Date(now.setDate(diff)).toISOString().split('T')[0];
+      const start = monday < SYSTEM_START_DATE ? SYSTEM_START_DATE : monday;
+      setDateFrom(start);
+      setDateTo(today);
+    } else if (preset === 'this_month') {
+      const now = new Date();
+      const firstOfMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      const start = firstOfMonth < SYSTEM_START_DATE ? SYSTEM_START_DATE : firstOfMonth;
+      setDateFrom(start);
+      setDateTo(today);
+    } else if (preset === 'all') {
+      setDateFrom('');
+      setDateTo('');
+    }
+  };
+
+  // Filtered expenses based on all criteria
+  const filteredExpenses = useMemo(() => {
+    return allExpenses.filter(exp => {
+      // Date range filter
+      if (dateFrom && exp.expense_date < dateFrom) return false;
+      if (dateTo && exp.expense_date > dateTo) return false;
+
+      // Category filter
+      if (selectedCategory !== 'ALL' && exp.category !== selectedCategory) return false;
+
+      // Source filter
+      const isDrawer = exp.description.includes('[Petty Cash]');
+      if (selectedSource === 'DRAWER' && !isDrawer) return false;
+      if (selectedSource === 'POCKET' && isDrawer) return false;
+
+      // Search keyword
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase().trim();
+        const desc = exp.description.toLowerCase();
+        const cat = exp.category.toLowerCase();
+        if (!desc.includes(query) && !cat.includes(query)) return false;
+      }
+
+      return true;
+    });
+  }, [allExpenses, dateFrom, dateTo, selectedCategory, selectedSource, searchQuery]);
+
+  // Pagination slice
+  const totalPages = Math.max(1, Math.ceil(filteredExpenses.length / itemsPerPage));
+  const paginatedExpenses = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredExpenses.slice(start, start + itemsPerPage);
+  }, [filteredExpenses, currentPage, itemsPerPage]);
+
+  // KPI Calculations
+  const todayStr = getTodayStr();
+  const todayItems = useMemo(() => allExpenses.filter(e => e.expense_date === todayStr), [allExpenses, todayStr]);
+  const todayTotal = useMemo(() => todayItems.reduce((s, e) => s + (Number(e.amount) || 0), 0), [todayItems]);
+
+  const filteredTotal = useMemo(
+    () => filteredExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0),
+    [filteredExpenses]
+  );
+  const allTimeTotal = useMemo(
+    () => allExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0),
+    [allExpenses]
+  );
+
+  const topCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    filteredExpenses.forEach(e => {
+      map.set(e.category, (map.get(e.category) || 0) + (Number(e.amount) || 0));
+    });
+    let maxCat = 'Walang Data';
+    let maxAmt = 0;
+    map.forEach((amt, cat) => {
+      if (amt > maxAmt) {
+        maxAmt = amt;
+        maxCat = cat;
+      }
+    });
+    return { name: maxCat, amount: maxAmt };
+  }, [filteredExpenses]);
+
+  // Category badge colors
+  const getCategoryColor = (cat: string) => {
+    switch (cat.toLowerCase()) {
+      case 'supplies':
+        return 'bg-blue-500/20 text-blue-300 border-blue-500/30';
+      case 'meals':
+      case 'food':
+        return 'bg-amber-500/20 text-amber-300 border-amber-500/30';
+      case 'transportation':
+        return 'bg-teal-500/20 text-teal-300 border-teal-500/30';
+      case 'utilities':
+        return 'bg-purple-500/20 text-purple-300 border-purple-500/30';
+      case 'rent':
+        return 'bg-rose-500/20 text-rose-300 border-rose-500/30';
+      case 'salary':
+        return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
+      case 'maintenance':
+        return 'bg-orange-500/20 text-orange-300 border-orange-500/30';
+      default:
+        return 'bg-surface-700/60 text-surface-300 border-surface-600/40';
+    }
+  };
+
+  // Quick Templates
+  const quickTemplates = [
+    { label: '🧊 Yelo', category: 'Supplies', desc: 'Yelo (Ice)', amount: 30 },
+    { label: '🛍️ Plastic Bags', category: 'Supplies', desc: 'Plastic Bags / Sando', amount: 25 },
+    { label: '🥪 Merienda', category: 'Meals', desc: 'Staff Merienda', amount: 100 },
+    { label: '🪵 Uling / Gas', category: 'Supplies', desc: 'Uling (Charcoal)', amount: 100 },
+    { label: '🛵 Pamasahe', category: 'Transportation', desc: 'Pamasahe / Delivery', amount: 50 },
+    { label: '📱 Paload', category: 'Utilities', desc: 'Mobile Load / Internet', amount: 50 },
+    { label: '🏠 Upa sa Tindahan', category: 'Rent', desc: 'Arawang Upa / Rent', amount: 400 },
+    { label: '💡 Kuryente', category: 'Utilities', desc: 'Kuryente / Electricity', amount: 300 },
+  ];
+
+  const handleQuickAdd = (tpl: typeof quickTemplates[0]) => {
+    setEditing({
+      id: 0,
+      category: tpl.category,
+      description: `[Petty Cash] ${tpl.desc}`,
+      amount: tpl.amount,
+      expense_date: getTodayStr(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    setShowForm(true);
+  };
+
+  // Export to CSV
+  const handleExportCSV = () => {
+    if (filteredExpenses.length === 0) {
+      alert('Walang mga tala ng gastos na mai-export.');
+      return;
+    }
+
+    const headers = ['#', 'Petsa', 'Kategorya', 'Deskripsyon', 'Pinagkunan', 'Halaga (PHP)'];
+    const rows = filteredExpenses.map((exp, idx) => {
+      const isDrawer = exp.description.includes('[Petty Cash]');
+      const cleanDesc = exp.description.replace('[Petty Cash]', '').replace('[Bulsa]', '').trim();
+      return [
+        idx + 1,
+        exp.expense_date,
+        `"${exp.category.replace(/"/g, '""')}"`,
+        `"${cleanDesc.replace(/"/g, '""')}"`,
+        isDrawer ? 'Kaha / Pondo (Petty Cash)' : 'Sariling Bulsa / Bank',
+        Number(exp.amount).toFixed(2),
+      ];
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const fromStr = dateFrom || 'simula';
+    const toStr = dateTo || 'ngayon';
+    link.href = url;
+    link.setAttribute('download', `Expense_Report_${fromStr}_hanggang_${toStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   async function handleSave(data: { category: string; description: string; amount: number; expense_date: string }) {
     try {
@@ -91,15 +272,13 @@ export function ExpensesPage() {
               payload: data,
               entityId: editing.id,
             });
-            setNoticeMsg('Updated offline! It will sync automatically when connected to the laptop.');
+            setNoticeMsg('Na-update offline! Awtomatikong magsi-sync kapag konektado sa laptop server.');
           }
         } else {
-          // Editing pending offline item
           await saveLocalExpense({ ...editing, ...data, is_pending: true });
-          setNoticeMsg('Updated offline! It will sync automatically when connected to the laptop.');
+          setNoticeMsg('Na-update offline! Awtomatikong magsi-sync kapag konektado sa laptop server.');
         }
       } else {
-        // Create new expense
         try {
           const res = await createExpense(data);
           if (res.data) {
@@ -124,7 +303,7 @@ export function ExpensesPage() {
             payload: data,
             tempId,
           });
-          setNoticeMsg('Saved offline! It will sync automatically when connected to the laptop.');
+          setNoticeMsg('Nai-save offline! Awtomatikong magsi-sync kapag konektado sa laptop server.');
         }
       }
       useSyncStore.getState().refreshCounts();
@@ -152,245 +331,300 @@ export function ExpensesPage() {
             payload: {},
             entityId: deleteConfirm.id,
           });
-          setNoticeMsg('Deleted offline! It will sync automatically when connected to the laptop.');
+          setNoticeMsg('Na-delete offline! Awtomatikong magsi-sync kapag konektado sa laptop server.');
         }
       } else {
-        // Created offline, remove locally and remove from queue
         await deleteLocalExpense(deleteConfirm.id);
         await removeMutationByTempId(deleteConfirm.id);
       }
       useSyncStore.getState().refreshCounts();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Delete failed');
+      alert(err instanceof Error ? err.message : 'Nabigong burahin ang gastos');
     } finally {
       setDeleteConfirm(null);
       loadExpenses();
     }
   }
 
-  const totalAmount = useMemo(() => expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0), [expenses]);
-  const todayStr = getTodayStr();
-  const todayExpenses = useMemo(() => expenses.filter(e => e.expense_date === todayStr), [expenses, todayStr]);
-  const todayTotal = useMemo(() => todayExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0), [todayExpenses]);
-
-  const topCategory = useMemo(() => {
-    const map = new Map<string, number>();
-    expenses.forEach(e => {
-      map.set(e.category, (map.get(e.category) || 0) + (Number(e.amount) || 0));
-    });
-    let maxCat = 'None';
-    let maxAmt = 0;
-    map.forEach((amt, cat) => {
-      if (amt > maxAmt) {
-        maxAmt = amt;
-        maxCat = cat;
-      }
-    });
-    return { category: maxCat, amount: maxAmt };
-  }, [expenses]);
-
-  const quickTemplates = [
-    { label: '+ Uling', category: 'Supplies', desc: 'Uling (Charcoal)', amount: 100 },
-    { label: '+ Mantika', category: 'Supplies', desc: 'Mantika (Cooking Oil)', amount: 95 },
-    { label: '+ Sticks', category: 'Supplies', desc: 'Hotdog / BBQ Sticks', amount: 20 },
-    { label: '+ Plastic Bags', category: 'Supplies', desc: 'Plastic Bags (Tiny/Mini)', amount: 22 },
-    { label: '+ Paper Bags', category: 'Supplies', desc: 'Paper Bags', amount: 40 },
-    { label: '+ Sili / Sibuyas', category: 'Supplies', desc: 'Sili & Sibuyas (Sauce)', amount: 30 },
-    { label: '+ Stall Rent', category: 'Rent', desc: 'Daily Stall Rent', amount: 400 },
-    { label: '+ Kuryente', category: 'Utilities', desc: 'Daily Kuryente / Electricity', amount: 300 },
-  ];
-
-  const handleQuickAdd = (tpl: typeof quickTemplates[0]) => {
-    setEditing({
-      id: 0,
-      category: tpl.category,
-      description: tpl.desc,
-      amount: tpl.amount,
-      expense_date: getTodayStr(),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-    setShowForm(true);
-  };
-
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-2.5 sm:space-y-3.5 animate-fade-in">
-      {/* Top Header Bar - Date Filters above Summary Cards */}
-      <div className="flex-shrink-0 flex items-center justify-between gap-2.5">
-        <div className="hidden lg:block">
-          <h1 className="text-xl sm:text-2xl font-bold text-surface-50 tracking-tight">Expenses & Bills</h1>
-          <p className="text-surface-400 mt-0.5 text-xs sm:text-sm">
-            Pagsubaybay sa mga gastusin, supplies, at mga bayarin
+    <div className="flex-1 min-h-0 flex flex-col gap-2 p-1 sm:p-2 animate-fade-in">
+
+      {/* ── HEADER & ACTIONS ── */}
+      <div className="flex-shrink-0 flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-xl">📊</span>
+            <h1 className="text-base sm:text-lg font-black text-surface-100 tracking-tight">
+              Expense Report & Audit Ledger
+            </h1>
+          </div>
+          <p className="text-[11px] text-surface-400">
+            Pangkalahatang talaan ng lahat ng operational expenses, pondo, at petty cash ng tindahan
           </p>
         </div>
 
-        {/* Date Filter Range Controls - Clean, non-overlapping layout */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 w-full lg:w-auto shrink-0">
-          <div className="flex items-center gap-1.5 w-full sm:w-auto">
-            {/* From Date */}
-            <div className="flex-1 sm:w-40 flex items-center gap-1.5 bg-surface-900 px-2.5 py-1.5 rounded-xl border border-surface-700 shadow-xs">
-              <span className="text-[10px] text-surface-400 font-bold shrink-0">Mula:</span>
-              <input
-                type="date"
-                value={filters.date_from}
-                min={SYSTEM_START_DATE}
-                onChange={e => {
-                  const rawVal = e.target.value;
-                  const val = rawVal && rawVal < SYSTEM_START_DATE ? SYSTEM_START_DATE : rawVal;
-                  setFilters(f => ({
-                    ...f,
-                    page: 1,
-                    date_from: val,
-                    date_to: f.date_to && f.date_to >= val ? f.date_to : val,
-                  }));
-                }}
-                className="w-full bg-transparent text-xs text-surface-100 font-bold focus:outline-none cursor-pointer"
-              />
-            </div>
-
-            {/* To Date */}
-            <div className="flex-1 sm:w-40 flex items-center gap-1.5 bg-surface-900 px-2.5 py-1.5 rounded-xl border border-surface-700 shadow-xs">
-              <span className="text-[10px] text-surface-400 font-bold shrink-0">Hanggang:</span>
-              <input
-                type="date"
-                value={filters.date_to}
-                min={SYSTEM_START_DATE}
-                onChange={e => {
-                  const rawVal = e.target.value;
-                  const val = rawVal && rawVal < SYSTEM_START_DATE ? SYSTEM_START_DATE : rawVal;
-                  setFilters(f => ({ ...f, page: 1, date_to: val }));
-                }}
-                className="w-full bg-transparent text-xs text-surface-100 font-bold focus:outline-none cursor-pointer"
-              />
-            </div>
-          </div>
-
-          {/* Preset Buttons */}
-          <div className="flex items-center gap-1.5 justify-end shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                const today = getTodayStr();
-                setFilters(f => ({ ...f, page: 1, date_from: today, date_to: today }));
-              }}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs whitespace-nowrap border ${
-                filters.date_from === getTodayStr() && filters.date_to === getTodayStr()
-                  ? 'bg-primary-600 border-primary-500 text-white'
-                  : 'bg-surface-800 hover:bg-surface-700 border-surface-700 text-surface-300'
-              }`}
-            >
-              ⚡ Ngayong Araw
-            </button>
-            {(filters.date_from || filters.date_to) && (
-              <button
-                type="button"
-                onClick={() => setFilters(f => ({ ...f, page: 1, date_from: '', date_to: '' }))}
-                className="px-2.5 py-1.5 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-400 hover:text-white text-xs font-bold border border-surface-700 transition-all cursor-pointer shadow-xs whitespace-nowrap"
-                title="Ipakita ang Lahat ng Gastos"
-              >
-                ✕ Lahat
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Compact Summary Metric Cards */}
-      <div className="flex-shrink-0 grid grid-cols-2 sm:grid-cols-3 gap-2">
-        <div className="p-2 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex flex-col justify-between">
-          <span className="text-[10px] font-bold text-surface-400 uppercase tracking-wider">Total Expenses</span>
-          <div className="flex items-baseline justify-between mt-0.5">
-            <span className="text-sm sm:text-base font-extrabold text-rose-400">
-              {formatCurrency(totalAmount)}
-            </span>
-            <span className="text-[10px] text-surface-500 font-medium">
-              {pagination.total} records
-            </span>
-          </div>
-        </div>
-
-        <div className="p-2 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex flex-col justify-between">
-          <span className="text-[10px] font-bold text-surface-400 uppercase tracking-wider">Ngayong Araw (Today)</span>
-          <div className="flex items-baseline justify-between mt-0.5">
-            <span className="text-sm sm:text-base font-extrabold text-amber-300">
-              {formatCurrency(todayTotal)}
-            </span>
-            <span className="text-[10px] text-surface-500 font-medium">
-              {todayExpenses.length} items
-            </span>
-          </div>
-        </div>
-
-        <div className="col-span-2 sm:col-span-1 p-2 sm:p-2.5 rounded-xl bg-surface-800/90 border border-surface-700/60 shadow-xs flex flex-col justify-between">
-          <span className="text-[10px] font-bold text-surface-400 uppercase tracking-wider">Top Category</span>
-          <div className="flex items-baseline justify-between mt-0.5">
-            <span className="text-xs sm:text-sm font-bold text-surface-200 truncate">
-              {topCategory.category}
-            </span>
-            <span className="text-[10px] text-surface-400 font-semibold">
-              {topCategory.amount > 0 ? formatCurrency(topCategory.amount) : '—'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Action Toolbar Below Summary Cards */}
-      <div className="flex-shrink-0 flex items-center justify-between gap-1.5 sm:gap-2">
-        {/* Quick-Add Pills Toggle Button */}
-        <button
-          onClick={() => setShowQuickPills(p => !p)}
-          className="text-xs text-surface-400 hover:text-primary-400 flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
-        >
-          <span>⚡ Quick-add pills</span>
-          <span className="text-primary-400 font-semibold">{showQuickPills ? '▲' : '▼ (8)'}</span>
-        </button>
-
-        {/* Action Controls: Quick-Add Template & Add Expense Button */}
-        <div className="flex items-center gap-1.5 sm:gap-2 flex-nowrap shrink-0 ml-auto">
-          <select
-            onChange={e => {
-              const tpl = quickTemplates.find(t => t.desc === e.target.value);
-              if (tpl) handleQuickAdd(tpl);
-              e.target.value = '';
-            }}
-            defaultValue=""
-            className="w-36 sm:w-48 text-xs py-1.5 px-2 rounded-xl bg-surface-850 border border-surface-700 text-surface-200 shrink-0 cursor-pointer shadow-xs focus:outline-none focus:border-primary-500"
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            type="button"
+            onClick={handleExportCSV}
+            className="h-8 px-2.5 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-200 hover:text-white border border-surface-700 text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+            title="I-download bilang CSV report"
           >
-            <option value="" disabled>⚡ Quick Template...</option>
-            {quickTemplates.map(tpl => (
-              <option key={tpl.desc} value={tpl.desc}>
-                {tpl.label} ({formatCurrency(tpl.amount)})
-              </option>
-            ))}
-          </select>
+            <span>📥</span>
+            <span>Export CSV</span>
+          </button>
 
           <button
-            onClick={() => { setEditing(null); setShowForm(true); }}
-            className="px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-primary-600 text-white text-xs sm:text-sm font-semibold hover:bg-primary-500 transition-colors shadow-xs shadow-primary-600/20 flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
+            type="button"
+            onClick={() => {
+              setEditing(null);
+              setShowForm(true);
+            }}
+            className="h-8 px-3 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer active:scale-95"
           >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            <span>+ Add Expense</span>
+            <span>➕</span>
+            <span>Magtala ng Gastos</span>
           </button>
         </div>
       </div>
 
-      {/* Collapsible Quick-Add Template Pills */}
-      {showQuickPills && (
-        <div className="flex-shrink-0 p-2 rounded-xl bg-surface-900/60 border border-surface-700/50 flex flex-wrap gap-1.5 animate-fade-in">
-          {quickTemplates.map(tpl => (
-            <button
-              key={tpl.label}
-              onClick={() => handleQuickAdd(tpl)}
-              className="px-2 py-1 rounded-lg bg-surface-800 hover:bg-surface-700 border border-surface-700/60 hover:border-primary-500/40 text-surface-200 text-[11px] font-medium transition-all shadow-xs flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
-            >
-              <span>{tpl.label}</span>
-              <span className="text-emerald-400 font-bold">({formatCurrency(tpl.amount)})</span>
-            </button>
-          ))}
+      {/* ── KPI ANALYTICAL CARDS ── */}
+      <div className="flex-shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-2">
+        {/* Card 1: Today's Expenses */}
+        <div className="p-2 sm:p-2.5 rounded-xl bg-surface-900 border border-surface-700/60 shadow-xs flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-surface-400 uppercase tracking-wider">
+              Gastos Ngayong Araw
+            </span>
+            <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold">
+              {todayItems.length} tala
+            </span>
+          </div>
+          <p className="text-base sm:text-lg font-black text-amber-300 mt-1 truncate">
+            {formatCurrency(todayTotal)}
+          </p>
+          <span className="text-[9px] text-surface-500 truncate">
+            {formatDate(todayStr)}
+          </span>
         </div>
-      )}
+
+        {/* Card 2: Filtered Period Total */}
+        <div className="p-2 sm:p-2.5 rounded-xl bg-surface-900 border border-surface-700/60 shadow-xs flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-surface-400 uppercase tracking-wider">
+              Gastos sa Panahon
+            </span>
+            <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 font-bold">
+              {filteredExpenses.length} tala
+            </span>
+          </div>
+          <p className="text-base sm:text-lg font-black text-rose-400 mt-1 truncate">
+            {formatCurrency(filteredTotal)}
+          </p>
+          <span className="text-[9px] text-surface-500 truncate">
+            {dateFrom && dateTo ? `${formatDate(dateFrom)} hanggang ${formatDate(dateTo)}` : 'Lahat ng talaan'}
+          </span>
+        </div>
+
+        {/* Card 3: Top Category */}
+        <div className="p-2 sm:p-2.5 rounded-xl bg-surface-900 border border-surface-700/60 shadow-xs flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-surface-400 uppercase tracking-wider">
+              Pinakamalaking Kategorya
+            </span>
+            <span className="text-sm">🏷️</span>
+          </div>
+          <p className="text-sm sm:text-base font-extrabold text-surface-100 mt-1 truncate">
+            {topCategory.name}
+          </p>
+          <span className="text-[9px] text-amber-400 font-bold truncate">
+            {topCategory.amount > 0 ? formatCurrency(topCategory.amount) : '₱0.00'}
+          </span>
+        </div>
+
+        {/* Card 4: All-Time Total */}
+        <div className="p-2 sm:p-2.5 rounded-xl bg-surface-900 border border-surface-700/60 shadow-xs flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-surface-400 uppercase tracking-wider">
+              Kabuuang Gastos (System)
+            </span>
+            <span className="text-sm">🏦</span>
+          </div>
+          <p className="text-base sm:text-lg font-black text-surface-200 mt-1 truncate">
+            {formatCurrency(allTimeTotal)}
+          </p>
+          <span className="text-[9px] text-surface-500 truncate">
+            {allExpenses.length} pangkalahatang tala
+          </span>
+        </div>
+      </div>
+
+      {/* ── FILTER & SEARCH RIBBON ── */}
+      <div className="flex-shrink-0 p-2 sm:p-2.5 rounded-xl bg-surface-900/90 border border-surface-700/60 shadow-xs space-y-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Quick Preset Buttons */}
+          <div className="flex items-center gap-1 bg-surface-950 p-1 rounded-lg border border-surface-800">
+            <button
+              type="button"
+              onClick={() => handleSetPreset('today')}
+              className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-all ${
+                dateFrom === todayStr && dateTo === todayStr
+                  ? 'bg-primary-600 text-white shadow-xs'
+                  : 'text-surface-400 hover:text-surface-200'
+              }`}
+            >
+              ⚡ Ngayon
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetPreset('yesterday')}
+              className="px-2 py-0.5 rounded text-[10px] font-bold text-surface-400 hover:text-surface-200 cursor-pointer transition-all"
+            >
+              📅 Kahapon
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetPreset('this_week')}
+              className="px-2 py-0.5 rounded text-[10px] font-bold text-surface-400 hover:text-surface-200 cursor-pointer transition-all"
+            >
+              📆 Linggo
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetPreset('this_month')}
+              className="px-2 py-0.5 rounded text-[10px] font-bold text-surface-400 hover:text-surface-200 cursor-pointer transition-all"
+            >
+              🗓️ Buwan
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetPreset('all')}
+              className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-all ${
+                !dateFrom && !dateTo
+                  ? 'bg-primary-600 text-white shadow-xs'
+                  : 'text-surface-400 hover:text-surface-200'
+              }`}
+            >
+              🗂️ Lahat
+            </button>
+          </div>
+
+          {/* Date Pickers */}
+          <div className="flex items-center gap-1 bg-surface-950 px-2 py-1 rounded-lg border border-surface-800">
+            <span className="text-[10px] text-surface-400 font-bold">Mula:</span>
+            <input
+              type="date"
+              value={dateFrom}
+              min={SYSTEM_START_DATE}
+              onChange={e => {
+                const val = e.target.value && e.target.value < SYSTEM_START_DATE ? SYSTEM_START_DATE : e.target.value;
+                setDateFrom(val);
+                setCurrentPage(1);
+              }}
+              className="bg-transparent text-[11px] text-surface-100 font-bold focus:outline-none cursor-pointer w-[110px]"
+            />
+          </div>
+
+          <div className="flex items-center gap-1 bg-surface-950 px-2 py-1 rounded-lg border border-surface-800">
+            <span className="text-[10px] text-surface-400 font-bold">Hanggang:</span>
+            <input
+              type="date"
+              value={dateTo}
+              min={SYSTEM_START_DATE}
+              onChange={e => {
+                const val = e.target.value && e.target.value < SYSTEM_START_DATE ? SYSTEM_START_DATE : e.target.value;
+                setDateTo(val);
+                setCurrentPage(1);
+              }}
+              className="bg-transparent text-[11px] text-surface-100 font-bold focus:outline-none cursor-pointer w-[110px]"
+            />
+          </div>
+
+          {/* Category Dropdown */}
+          <select
+            value={selectedCategory}
+            onChange={e => {
+              setSelectedCategory(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="h-7 px-2 rounded-lg bg-surface-950 border border-surface-800 text-surface-200 text-xs font-semibold focus:outline-none cursor-pointer"
+          >
+            <option value="ALL">🏷️ Lahat ng Kategorya</option>
+            <option value="Supplies">📦 Supplies</option>
+            <option value="Meals">🥪 Meals / Food</option>
+            <option value="Transportation">🛵 Transportation</option>
+            <option value="Utilities">💡 Utilities</option>
+            <option value="Rent">🏠 Rent</option>
+            <option value="Maintenance">🔧 Maintenance</option>
+            <option value="Salary">👥 Salary</option>
+            <option value="Equipment">⚙️ Equipment</option>
+            <option value="Other">Iba pa (Other)</option>
+          </select>
+
+          {/* Source Dropdown */}
+          <select
+            value={selectedSource}
+            onChange={e => {
+              setSelectedSource(e.target.value as any);
+              setCurrentPage(1);
+            }}
+            className="h-7 px-2 rounded-lg bg-surface-950 border border-surface-800 text-surface-200 text-xs font-semibold focus:outline-none cursor-pointer"
+          >
+            <option value="ALL">💵 Lahat ng Pinagkunan</option>
+            <option value="DRAWER">💵 Mula sa Kaha (Petty Cash)</option>
+            <option value="POCKET">💼 Sariling Bulsa / Bank</option>
+          </select>
+
+          {/* Search Input */}
+          <div className="flex-1 min-w-[140px] relative">
+            <input
+              type="text"
+              value={searchQuery}
+              placeholder="🔍 Maghanap ng gastos o kategorya..."
+              onChange={e => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full h-7 pl-2 pr-6 rounded-lg bg-surface-950 border border-surface-800 text-surface-100 text-xs focus:outline-none focus:border-primary-500"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-surface-400 hover:text-white text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowQuickPills(p => !p)}
+            className="h-7 px-2 rounded-lg bg-surface-950 border border-surface-800 text-[10px] text-surface-400 hover:text-primary-400 flex items-center gap-1 cursor-pointer shrink-0"
+          >
+            <span>⚡ Mabilisang Chips</span>
+            <span>{showQuickPills ? '▲' : '▼'}</span>
+          </button>
+        </div>
+
+        {/* Collapsible Quick-Add Template Pills */}
+        {showQuickPills && (
+          <div className="pt-2 border-t border-surface-800/80 flex flex-wrap gap-1.5 animate-fade-in">
+            {quickTemplates.map(tpl => (
+              <button
+                key={tpl.desc}
+                type="button"
+                onClick={() => handleQuickAdd(tpl)}
+                className="px-2 py-1 rounded-lg bg-surface-950 hover:bg-surface-800 border border-surface-800 hover:border-primary-500/50 text-surface-200 text-[11px] font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <span>{tpl.label}</span>
+                <span className="text-emerald-400 font-bold">({formatCurrency(tpl.amount)})</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {noticeMsg && (
         <div className="flex-shrink-0 bg-primary-500/10 border border-primary-500/30 rounded-xl p-2.5 flex items-center justify-between text-xs text-primary-300 font-medium">
@@ -405,233 +639,174 @@ export function ExpensesPage() {
         </div>
       )}
 
-      {/* Main Expenses Container with View Switcher */}
-      <div className="flex-1 min-h-0 bg-surface-800/50 rounded-xl border border-surface-700/50 flex flex-col overflow-hidden shadow-sm">
-        {/* Table/Card Header Bar */}
-        <div className="px-3 py-2 sm:px-4 sm:py-2.5 bg-surface-900/70 border-b border-surface-700/50 flex items-center justify-between gap-2 flex-nowrap shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <h3 className="text-xs sm:text-sm font-bold text-surface-100 flex items-center gap-1.5 truncate">
-              <span>📋</span> <span>Talaan ng Gastos (Expenses List)</span>
-            </h3>
-            <span className="text-[10px] sm:text-xs text-surface-400 hidden sm:inline whitespace-nowrap">
-              ({pagination.total} records)
-            </span>
-          </div>
-
-          {/* View Switcher: [ 📱 Cards | 📋 Table ] */}
-          <div className="flex items-center gap-1 bg-surface-800/80 p-0.5 rounded-lg border border-surface-700/60 shrink-0">
-            <button
-              onClick={() => setViewMode('cards')}
-              className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
-                viewMode === 'cards'
-                  ? 'bg-primary-600 text-white shadow-xs'
-                  : 'text-surface-400 hover:text-surface-200'
-              }`}
-              title="Cards View"
-            >
-              <span>📱</span> <span className="hidden xs:inline">Cards</span>
-            </button>
-            <button
-              onClick={() => setViewMode('table')}
-              className={`px-2 py-0.5 text-xs font-medium rounded transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
-                viewMode === 'table'
-                  ? 'bg-primary-600 text-white shadow-xs'
-                  : 'text-surface-400 hover:text-surface-200'
-              }`}
-              title="Table View"
-            >
-              <span>📋</span> <span className="hidden xs:inline">Table</span>
-            </button>
-          </div>
-        </div>
-
+      {/* ── MAIN DATA TABLE (EXPENSE AUDIT LEDGER) ── */}
+      <div className="flex-1 min-h-0 bg-surface-900 rounded-xl border border-surface-700/60 flex flex-col overflow-hidden shadow-sm">
         {loading ? (
-          <div className="flex-1 min-h-0 flex items-center justify-center py-16">
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-8 h-8 border-3 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
-              <p className="text-xs text-surface-400">Kinukuha ang talaan ng mga gastos...</p>
-            </div>
+          <div className="flex-1 flex flex-col items-center justify-center py-16">
+            <div className="w-8 h-8 border-3 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
+            <p className="text-xs text-surface-400 mt-2">Kinukuha ang kumpletong audit ledger...</p>
           </div>
-        ) : expenses.length === 0 ? (
-          <div className="flex-1 min-h-0 flex flex-col items-center justify-center py-12 text-center">
-            <span className="text-3xl mb-2 block">💸</span>
-            <p className="text-surface-300 font-medium text-xs sm:text-sm">Walang naitalang gastos</p>
-            <p className="text-surface-500 text-[11px] sm:text-xs mt-0.5">Mag-add ng expense gamit ang "+ Add Expense" o Quick-Add sa itaas</p>
+        ) : filteredExpenses.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
+            <span className="text-4xl mb-2">💸</span>
+            <p className="text-surface-300 font-bold text-sm">Walang nakitang gastos</p>
+            <p className="text-surface-500 text-xs mt-1">
+              Subukang palitan ang petsa o magdagdag ng bagong gastos gamit ang "+ Magtala ng Gastos" sa itaas.
+            </p>
           </div>
         ) : (
           <>
-            {/* Scrollable Container for Table or Cards */}
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              {viewMode === 'cards' ? (
-                /* Cards View */
-                <div className="p-2 sm:p-2.5 divide-y divide-surface-700/30 space-y-1">
-                  {expenses.map(exp => (
-                    <div
-                      key={exp.id}
-                      className="p-2.5 rounded-xl hover:bg-surface-700/20 transition-colors bg-surface-900/40 border border-surface-800/60"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-surface-100 font-semibold text-xs sm:text-sm truncate">
-                            {exp.description}
-                          </p>
-                          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                            <span className="px-1.5 py-0.2 rounded bg-surface-800 border border-surface-700/60 text-surface-300 text-[10px] font-medium">
-                              {exp.category}
-                            </span>
-                            <span className="text-surface-500 text-[10px]">
-                              {formatDate(exp.expense_date)}
-                            </span>
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[650px] whitespace-nowrap">
+                <thead className="sticky top-0 bg-surface-950 border-b border-surface-700/60 z-10 shadow-xs">
+                  <tr>
+                    <th className="px-3 py-2.5 text-[11px] font-bold text-surface-400 uppercase w-10">
+                      #
+                    </th>
+                    <th className="px-3 py-2.5 text-[11px] font-bold text-surface-400 uppercase">
+                      Petsa
+                    </th>
+                    <th className="px-3 py-2.5 text-[11px] font-bold text-surface-400 uppercase">
+                      Kategorya
+                    </th>
+                    <th className="px-3 py-2.5 text-[11px] font-bold text-surface-400 uppercase">
+                      Deskripsyon / Detalye
+                    </th>
+                    <th className="px-3 py-2.5 text-[11px] font-bold text-surface-400 uppercase">
+                      Pinagkunan
+                    </th>
+                    <th className="px-3 py-2.5 text-[11px] font-bold text-surface-400 uppercase text-right">
+                      Halaga
+                    </th>
+                    <th className="px-3 py-2.5 text-[11px] font-bold text-surface-400 uppercase text-right w-20">
+                      Aksyon
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-800/60 text-xs">
+                  {paginatedExpenses.map((exp, index) => {
+                    const rowNumber = (currentPage - 1) * itemsPerPage + index + 1;
+                    const isDrawer = exp.description.includes('[Petty Cash]');
+                    const cleanDesc = exp.description.replace('[Petty Cash]', '').replace('[Bulsa]', '').trim();
+
+                    return (
+                      <tr key={exp.id} className="hover:bg-surface-800/40 transition-colors">
+                        <td className="px-3 py-2 text-surface-500 font-mono text-[11px]">
+                          {rowNumber}
+                        </td>
+                        <td className="px-3 py-2 font-semibold text-surface-200">
+                          {formatDate(exp.expense_date)}
+                        </td>
+                        <td className="px-3 py-2">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${getCategoryColor(
+                              exp.category
+                            )}`}
+                          >
+                            {exp.category}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 font-medium text-surface-100 max-w-[280px]">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="truncate">{cleanDesc}</span>
                             {(exp.is_pending || exp.id < 0) && (
-                              <span className="px-1.5 py-0.2 rounded bg-warning-500/20 text-warning-400 text-[10px] font-semibold flex items-center gap-0.5">
+                              <span className="px-1 py-0.2 rounded bg-warning-500/20 text-warning-400 text-[9px] font-bold">
                                 ⏳ Pending Sync
                               </span>
                             )}
                           </div>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-rose-400 font-bold text-xs sm:text-sm whitespace-nowrap">
-                            -{formatCurrency(exp.amount)}
-                          </span>
-                          <div className="flex items-center gap-1 ml-1">
-                            <button
-                              onClick={() => { setEditing(exp); setShowForm(true); }}
-                              className="p-1 rounded-lg text-surface-300 hover:text-primary-400 bg-surface-800 hover:bg-surface-700 border border-surface-700/60 transition-colors cursor-pointer"
-                              title="Edit Expense"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                              </svg>
-                            </button>
-                            <button
-                              onClick={() => setDeleteConfirm(exp)}
-                              className="p-1 rounded-lg text-surface-300 hover:text-danger-500 bg-surface-800 hover:bg-surface-700 border border-surface-700/60 transition-colors cursor-pointer"
-                              title="Delete Expense"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                /* Responsive Table View - Zero Horizontal Scrollbar */
-                <table className="w-full text-left border-collapse">
-                  <thead className="sticky top-0 bg-surface-900 border-b border-surface-700/60 z-10 shadow-xs">
-                    <tr>
-                      <th className="px-2.5 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase whitespace-nowrap">
-                        Date
-                      </th>
-                      <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase">
-                        Description
-                      </th>
-                      <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase whitespace-nowrap hidden sm:table-cell">
-                        Category
-                      </th>
-                      <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-right whitespace-nowrap">
-                        Amount
-                      </th>
-                      <th className="px-2 sm:px-3 py-2 text-[11px] font-bold text-surface-400 uppercase text-right whitespace-nowrap">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-surface-700/30">
-                    {expenses.map(exp => (
-                      <tr key={exp.id} className="hover:bg-surface-700/20 transition-colors">
-                        <td className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-semibold text-surface-300 whitespace-nowrap">
-                          {formatDate(exp.expense_date)}
                         </td>
-                        <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-xs text-surface-100 font-medium">
-                          <div className="flex items-center gap-1.5">
-                            <span className="truncate">{exp.description}</span>
-                            {(exp.is_pending || exp.id < 0) && (
-                              <span className="px-1 py-0.2 rounded bg-warning-500/20 text-warning-400 text-[9px] font-semibold whitespace-nowrap">
-                                ⏳ Pending
-                              </span>
-                            )}
-                          </div>
+                        <td className="px-3 py-2">
+                          {isDrawer ? (
+                            <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-bold inline-flex items-center gap-1">
+                              <span>💵</span> Kaha / Pondo
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-lg bg-sky-500/15 text-sky-300 border border-sky-500/30 text-[10px] font-bold inline-flex items-center gap-1">
+                              <span>💼</span> Bulsa / Bank
+                            </span>
+                          )}
                         </td>
-                        <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-xs whitespace-nowrap hidden sm:table-cell">
-                          <span className="px-2 py-0.5 rounded-full bg-surface-700/60 text-surface-300 text-[10px] font-medium border border-surface-600/40">
-                            {exp.category}
-                          </span>
-                        </td>
-                        <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-right text-xs font-bold text-rose-400 whitespace-nowrap">
+                        <td className="px-3 py-2 text-right font-black text-rose-400 text-sm">
                           -{formatCurrency(exp.amount)}
                         </td>
-                        <td className="px-2 sm:px-3 py-1.5 sm:py-2 text-right whitespace-nowrap">
+                        <td className="px-3 py-2 text-right">
                           <div className="flex items-center justify-end gap-1">
                             <button
-                              onClick={() => { setEditing(exp); setShowForm(true); }}
-                              className="p-1 rounded text-surface-400 hover:text-primary-400 hover:bg-surface-700 transition-colors cursor-pointer"
-                              title="Edit Expense"
+                              type="button"
+                              onClick={() => {
+                                setEditing(exp);
+                                setShowForm(true);
+                              }}
+                              className="p-1 rounded text-surface-400 hover:text-primary-400 hover:bg-surface-800 transition-colors cursor-pointer"
+                              title="I-edit ang gastos"
                             >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                              </svg>
+                              ✏️
                             </button>
                             <button
+                              type="button"
                               onClick={() => setDeleteConfirm(exp)}
-                              className="p-1 rounded text-surface-400 hover:text-danger-500 hover:bg-surface-700 transition-colors cursor-pointer"
-                              title="Delete Expense"
+                              className="p-1 rounded text-surface-400 hover:text-rose-400 hover:bg-surface-800 transition-colors cursor-pointer"
+                              title="Burahin ang gastos"
                             >
-                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
+                              🗑️
                             </button>
                           </div>
                         </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
 
-            {/* Pinned Card Footer: Strictly Single-Line Non-Wrapping Pagination */}
-            <div className="flex-shrink-0 px-2.5 sm:px-3 py-1.5 sm:py-2 bg-surface-900/90 border-t border-surface-700/60 flex items-center justify-between flex-nowrap text-xs gap-2 shrink-0">
-              <span className="text-[10px] sm:text-xs text-surface-400 font-medium whitespace-nowrap shrink-0">
-                {pagination.total === 0
-                  ? '0 of 0'
-                  : `${(pagination.page - 1) * filters.per_page + 1}-${Math.min(
-                      pagination.page * filters.per_page,
-                      pagination.total
-                    )} of ${pagination.total}`}
-              </span>
-
-              <div className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap shrink-0">
-                <select
-                  value={filters.per_page}
-                  onChange={e => setFilters(f => ({ ...f, page: 1, per_page: Number(e.target.value) }))}
-                  className="bg-surface-800 border border-surface-700/60 rounded px-1 py-0.5 text-[10px] sm:text-[11px] text-surface-300 cursor-pointer"
-                >
-                  <option value={10}>10/page</option>
-                  <option value={15}>15/page</option>
-                  <option value={25}>25/page</option>
-                  <option value={50}>50/page</option>
-                </select>
-                <button
-                  onClick={() => setFilters(f => ({ ...f, page: f.page - 1 }))}
-                  disabled={pagination.page <= 1}
-                  className="px-1.5 sm:px-2 py-0.5 rounded bg-surface-800 hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] sm:text-[11px] border border-surface-700/60 text-surface-200 cursor-pointer whitespace-nowrap"
-                >
-                  ← Prev
-                </button>
-                <span className="text-[10px] sm:text-[11px] text-surface-400 font-medium px-0.5">
-                  {pagination.page}/{pagination.total_pages || 1}
+            {/* ── TABLE FOOTER: SUMMARY & PAGINATION ── */}
+            <div className="flex-shrink-0 px-3 py-2 bg-surface-950 border-t border-surface-700/60 flex items-center justify-between flex-wrap gap-2 text-xs">
+              <div className="flex items-center gap-2 text-surface-400">
+                <span>
+                  Ipinapakita ang <strong>{paginatedExpenses.length}</strong> sa <strong>{filteredExpenses.length}</strong> talaan
                 </span>
-                <button
-                  onClick={() => setFilters(f => ({ ...f, page: f.page + 1 }))}
-                  disabled={pagination.page >= pagination.total_pages}
-                  className="px-1.5 sm:px-2 py-0.5 rounded bg-surface-800 hover:bg-surface-700 disabled:opacity-40 disabled:cursor-not-allowed text-[10px] sm:text-[11px] border border-surface-700/60 text-surface-200 cursor-pointer whitespace-nowrap"
+                <span className="text-surface-600">•</span>
+                <span>
+                  Kabuuang halaga: <strong className="text-rose-400 font-extrabold">{formatCurrency(filteredTotal)}</strong>
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={itemsPerPage}
+                  onChange={e => {
+                    setItemsPerPage(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="bg-surface-900 border border-surface-700/60 rounded px-1.5 py-0.5 text-[11px] text-surface-300 cursor-pointer"
                 >
-                  Next →
+                  <option value={15}>15 bawat pahina</option>
+                  <option value={25}>25 bawat pahina</option>
+                  <option value={50}>50 bawat pahina</option>
+                  <option value={100}>100 bawat pahina</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                  className="px-2 py-0.5 rounded bg-surface-900 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed border border-surface-700/60 text-surface-200 text-xs font-bold cursor-pointer"
+                >
+                  ← Bago
+                </button>
+
+                <span className="text-[11px] text-surface-300 font-bold px-1">
+                  {currentPage} / {totalPages}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="px-2 py-0.5 rounded bg-surface-900 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-not-allowed border border-surface-700/60 text-surface-200 text-xs font-bold cursor-pointer"
+                >
+                  Sunod →
                 </button>
               </div>
             </div>
@@ -639,37 +814,79 @@ export function ExpensesPage() {
         )}
       </div>
 
-      {/* Form modal */}
+      {/* ── MODAL: ADD / EDIT EXPENSE ── */}
       {showForm && (
-        <ExpenseFormModal expense={editing} onSave={handleSave} onClose={() => { setShowForm(false); setEditing(null); }} />
+        <ExpenseFormModal
+          expense={editing}
+          onSave={handleSave}
+          onClose={() => {
+            setShowForm(false);
+            setEditing(null);
+          }}
+        />
       )}
 
-      {/* Delete confirm */}
-      {deleteConfirm && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-surface-800 rounded-2xl p-5 sm:p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-fade-in max-h-[90dvh] overflow-y-auto">
-            <h3 className="text-lg font-bold text-surface-100 mb-2">Delete Expense?</h3>
-            <p className="text-surface-400 text-sm mb-6">Delete "{deleteConfirm.description}" ({formatCurrency(deleteConfirm.amount)})?</p>
-            <div className="flex gap-3">
-              <button onClick={() => setDeleteConfirm(null)} className="flex-1 px-4 py-2.5 rounded-xl bg-surface-700 text-surface-200 text-sm font-medium hover:bg-surface-600 transition-colors">Cancel</button>
-              <button onClick={handleDelete} className="flex-1 px-4 py-2.5 rounded-xl bg-danger-600 text-white text-sm font-medium hover:bg-danger-500 transition-colors">Delete</button>
+      {/* ── MODAL: DELETE CONFIRMATION ── */}
+      {deleteConfirm &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-xs animate-fade-in">
+            <div className="bg-surface-900 rounded-2xl p-5 sm:p-6 max-w-sm w-full border border-surface-700 shadow-2xl animate-scale-up">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-2xl">⚠️</span>
+                <h3 className="text-base font-bold text-surface-100">Tanggalin ang Gastos?</h3>
+              </div>
+              <p className="text-surface-300 text-xs mb-1">
+                Sigurado ka bang nais mong tanggalin ang gastos na ito?
+              </p>
+              <div className="p-2.5 rounded-xl bg-surface-950 border border-surface-800 my-3 space-y-1">
+                <p className="text-xs font-bold text-surface-200">
+                  {deleteConfirm.description.replace('[Petty Cash]', '').replace('[Bulsa]', '').trim()}
+                </p>
+                <p className="text-xs font-black text-rose-400">
+                  {formatCurrency(deleteConfirm.amount)} • {formatDate(deleteConfirm.expense_date)}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirm(null)}
+                  className="flex-1 px-3 py-2 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-300 text-xs font-bold cursor-pointer border border-surface-700 transition-colors"
+                >
+                  Kanselahin
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  className="flex-1 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer transition-colors shadow-md active:scale-95"
+                >
+                  Oo, Tanggalin
+                </button>
+              </div>
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
 
-function ExpenseFormModal({ expense, onSave, onClose }: {
+function ExpenseFormModal({
+  expense,
+  onSave,
+  onClose,
+}: {
   expense: Expense | null;
   onSave: (data: { category: string; description: string; amount: number; expense_date: string }) => Promise<void>;
   onClose: () => void;
 }) {
   const [category, setCategory] = useState(expense?.category ?? 'Supplies');
-  const [description, setDescription] = useState(expense?.description ?? '');
+  const [description, setDescription] = useState(
+    expense?.description?.replace('[Petty Cash]', '').replace('[Bulsa]', '').trim() ?? ''
+  );
   const [amount, setAmount] = useState(expense?.amount ?? 0);
+  const [isFromDrawer, setIsFromDrawer] = useState(() => {
+    return expense ? (expense.description?.includes('[Petty Cash]') ?? true) : true;
+  });
   const [expenseDate, setExpenseDate] = useState(() => {
     const d = expense?.expense_date ?? getTodayStr();
     return d < SYSTEM_START_DATE ? SYSTEM_START_DATE : d;
@@ -677,46 +894,136 @@ function ExpenseFormModal({ expense, onSave, onClose }: {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
 
-  const expenseCategories = ['Supplies', 'Utilities', 'Rent', 'Salary', 'Equipment', 'Marketing', 'Transportation', 'Food', 'Maintenance', 'Other'];
+  const expenseCategories = [
+    'Supplies',
+    'Meals',
+    'Transportation',
+    'Utilities',
+    'Rent',
+    'Salary',
+    'Maintenance',
+    'Equipment',
+    'Marketing',
+    'Other',
+  ];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!description.trim() || amount <= 0) { setFormError('Description and amount are required'); return; }
+    if (!description.trim() || amount <= 0) {
+      setFormError('Kailangan ng wastong deskripsyon at halaga ng gastos.');
+      return;
+    }
     setSaving(true);
     setFormError('');
     try {
-      await onSave({ category, description: description.trim(), amount, expense_date: expenseDate });
+      const cleanDesc = description.replace('[Petty Cash]', '').replace('[Bulsa]', '').trim();
+      const finalDesc = isFromDrawer ? `[Petty Cash] ${cleanDesc}` : cleanDesc;
+      await onSave({ category, description: finalDesc, amount, expense_date: expenseDate });
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Save failed');
+      setFormError(err instanceof Error ? err.message : 'Nabigong i-save ang gastos');
     } finally {
       setSaving(false);
     }
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-surface-800 rounded-2xl p-5 sm:p-6 max-w-md w-full border border-surface-700 shadow-2xl animate-fade-in max-h-[90dvh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-xs animate-fade-in">
+      <div className="bg-surface-900 rounded-2xl p-5 sm:p-6 max-w-md w-full border border-surface-700 shadow-2xl animate-scale-up max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-surface-100">{expense ? 'Edit Expense' : 'New Expense'}</h3>
-          <button type="button" onClick={onClose} className="p-1 rounded-lg text-surface-400 hover:text-surface-200 hover:bg-surface-700">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          <div className="flex items-center gap-2">
+            <span className="text-xl">💸</span>
+            <h3 className="text-base font-bold text-surface-100">
+              {expense ? 'I-edit ang Gastos' : 'Magtala ng Bagong Gastos'}
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-7 h-7 rounded-full bg-surface-800 hover:bg-surface-700 text-surface-400 hover:text-white flex items-center justify-center text-xs transition-colors cursor-pointer"
+          >
+            ✕
           </button>
         </div>
-        {formError && <div className="mb-4 p-3 rounded-lg bg-danger-500/10 border border-danger-500/30 text-danger-500 text-sm">{formError}</div>}
-        <form onSubmit={handleSubmit} className="space-y-4">
+
+        {formError && (
+          <div className="mb-4 p-2.5 rounded-xl bg-danger-500/10 border border-danger-500/30 text-danger-400 text-xs">
+            ⚠️ {formError}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-3.5">
+          {/* Fund Source Toggle */}
           <div>
-            <label className="block text-xs font-medium text-surface-400 mb-1.5">Category</label>
-            <select value={category} onChange={e => setCategory(e.target.value)} className="form-input">
-              {expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
+            <label className="block text-[11px] font-bold text-surface-400 uppercase tracking-wide mb-1">
+              Pinagkunan ng Pera (Source of Funds)
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setIsFromDrawer(true)}
+                className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                  isFromDrawer
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/50 shadow-xs'
+                    : 'bg-surface-950 text-surface-400 border-surface-800 hover:text-surface-200'
+                }`}
+              >
+                <span className="flex items-center gap-1">💵 Kaha / Pondo</span>
+                <span className="text-[9px] text-surface-500">Bawas sa pondo</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsFromDrawer(false)}
+                className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                  !isFromDrawer
+                    ? 'bg-sky-500/15 text-sky-300 border-sky-500/50 shadow-xs'
+                    : 'bg-surface-950 text-surface-400 border-surface-800 hover:text-surface-200'
+                }`}
+              >
+                <span className="flex items-center gap-1">💼 Bulsa / Bank</span>
+                <span className="text-[9px] text-surface-500">Hindi bawas sa kaha</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Category */}
+          <div>
+            <label className="block text-[11px] font-bold text-surface-400 uppercase tracking-wide mb-1">
+              Kategorya
+            </label>
+            <select
+              value={category}
+              onChange={e => setCategory(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl bg-surface-950 border border-surface-700 text-surface-100 text-xs font-semibold focus:border-primary-500 focus:outline-none cursor-pointer"
+            >
+              {expenseCategories.map(c => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
             </select>
           </div>
+
+          {/* Description */}
           <div>
-            <label className="block text-xs font-medium text-surface-400 mb-1.5">Description *</label>
-            <input type="text" value={description} onChange={e => setDescription(e.target.value)} className="form-input" placeholder="What was the expense for?" required />
+            <label className="block text-[11px] font-bold text-surface-400 uppercase tracking-wide mb-1">
+              Deskripsyon / Para Saan *
+            </label>
+            <input
+              type="text"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="Hal. Yelo, plastic bag, gasolina, merienda..."
+              className="w-full px-3 py-2 rounded-xl bg-surface-950 border border-surface-700 text-surface-100 text-xs font-medium focus:border-primary-500 focus:outline-none"
+              required
+            />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+
+          {/* Amount & Date */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             <div>
-              <label className="block text-xs font-medium text-surface-400 mb-1.5">Amount (₱) *</label>
+              <label className="block text-[11px] font-bold text-surface-400 uppercase tracking-wide mb-1">
+                Halaga (₱) *
+              </label>
               <input
                 type="number"
                 step="0.01"
@@ -726,12 +1033,14 @@ function ExpenseFormModal({ expense, onSave, onClose }: {
                 onFocus={e => e.target.select()}
                 onClick={e => (e.target as HTMLInputElement).select()}
                 onChange={e => setAmount(parseFloat(e.target.value) || 0)}
-                className="form-input"
+                className="w-full px-3 py-2 rounded-xl bg-surface-950 border border-surface-700 text-surface-100 font-bold text-sm focus:border-primary-500 focus:outline-none"
                 required
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-surface-400 mb-1.5">Date</label>
+              <label className="block text-[11px] font-bold text-surface-400 uppercase tracking-wide mb-1">
+                Petsa
+              </label>
               <input
                 type="date"
                 value={expenseDate}
@@ -740,14 +1049,25 @@ function ExpenseFormModal({ expense, onSave, onClose }: {
                   const val = e.target.value;
                   setExpenseDate(val < SYSTEM_START_DATE ? SYSTEM_START_DATE : val);
                 }}
-                className="form-input"
+                className="w-full px-3 py-2 rounded-xl bg-surface-950 border border-surface-700 text-surface-100 text-xs font-semibold focus:border-primary-500 focus:outline-none cursor-pointer"
               />
             </div>
           </div>
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 rounded-xl bg-surface-700 text-surface-200 text-sm font-medium hover:bg-surface-600 transition-colors">Cancel</button>
-            <button type="submit" disabled={saving} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-500 disabled:opacity-50 transition-colors">
-              {saving ? 'Saving...' : expense ? 'Update' : 'Add Expense'}
+
+          <div className="flex gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-3 py-2 rounded-xl bg-surface-800 hover:bg-surface-700 text-surface-300 text-xs font-bold cursor-pointer border border-surface-700 transition-colors"
+            >
+              Kanselahin
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white text-xs font-bold cursor-pointer transition-colors shadow-md active:scale-95"
+            >
+              {saving ? 'Sine-save...' : expense ? 'I-update' : 'I-save ang Gastos'}
             </button>
           </div>
         </form>

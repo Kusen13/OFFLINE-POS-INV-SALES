@@ -123,15 +123,39 @@ export function normalizeSheetItems(sheet: ReorderSheet): ReorderSheet {
     const norm = it.product_name.toLowerCase().trim();
     const isHotdog = norm === 'hotdog';
 
+    // Infer business_type
+    let bType = it.business_type;
+    if (!bType) {
+      const cat = (it.category_name || '').toLowerCase();
+      if (cat.includes('bigas') || cat.includes('rice')) bType = 'rice';
+      else if (cat.includes('gulay') || cat.includes('veg')) bType = 'vegetables';
+      else if (cat.includes('bbq') || cat.includes('inihaw') || cat.includes('barbeque')) bType = 'barbeque';
+      else bType = 'groceries';
+    }
+
     let supplierName = it.supplier_name;
     if (!supplierName || supplierName.trim().length === 0) {
-      supplierName = isHotdog ? 'Meycauayan Public Market' : 'BBQ-SUPPLIER(Saog)';
+      if (bType === 'rice') {
+        supplierName = 'Intercity Bocaue Rice Trading';
+      } else if (bType === 'vegetables') {
+        supplierName = 'Balintawak / Meycauayan Bagsakan';
+      } else if (bType === 'barbeque') {
+        supplierName = isHotdog ? 'Meycauayan Public Market' : 'BBQ-SUPPLIER(Saog)';
+      } else {
+        supplierName = 'Puregold Wholesale Meycauayan';
+      }
     } else if (supplierName.toLowerCase().includes('saog') || supplierName.toLowerCase().includes('bbq')) {
       supplierName = 'BBQ-SUPPLIER(Saog)';
     }
 
     return {
       ...it,
+      item_type: it.item_type || 'product',
+      business_type: bType,
+      category_id: it.category_id ?? 1,
+      category_name: it.category_name || 'General',
+      unit: it.unit || (it.sell_by_weight ? 'kg' : (norm === 'suka' ? 'bottle' : 'sticks')),
+      sell_by_weight: it.sell_by_weight ?? false,
       supplier_name: supplierName,
       prev_stock: it.prev_stock ?? it.unsold_qty ?? 0,
     };
@@ -265,6 +289,7 @@ export async function getPrevStocksMap(date: string): Promise<Record<string, num
   try {
     const products = await getAllProducts();
     for (const p of products) {
+      if (p.id === 999 || p.item_type === 'service' || p.item_type === 'supply') continue;
       const norm = p.name.toLowerCase().trim();
       prevMap[norm] = p.current_stock ?? p.initial_stock ?? 0;
     }
@@ -289,21 +314,93 @@ export async function generateSuggestedReorder(
   if (!ignoreExisting) {
     const existing = await getReorderSheetByDate(orderDate);
     if (existing) {
-      // If sheet is a draft, make sure its Prev. Stocks dynamically reflect yesterday's closing
-      if (existing.status === 'DRAFT') {
-        const prevMap = await getPrevStocksMap(orderDate);
-        existing.items = existing.items.map(it => {
-          const norm = it.product_name.toLowerCase().trim();
-          const accuratePrev = prevMap[norm] !== undefined ? prevMap[norm] : (it.prev_stock ?? 0);
-          const suggested = Math.max(0, (it.target_stock || 0) - accuratePrev);
+      // Clean out any custom / open item anchor that might have slipped into drafts
+      if (existing.items) {
+        existing.items = existing.items.filter(
+          it => it.product_id !== 999 && !it.product_name.toLowerCase().includes('custom / open')
+        );
+      }
+
+      const allProds = await getAllProducts();
+      const prodMap = new Map(allProds.map(p => [p.id, p]));
+      const prodByName = new Map(allProds.map(p => [p.name.toLowerCase().trim(), p]));
+
+      // Helper: get the effective lock status for a specific dept, checking dept_status first
+      const getDeptLockStatus = (dept: string): string => {
+        if (existing.dept_status && existing.dept_status[dept]) {
+          return existing.dept_status[dept];
+        }
+        return existing.status || 'DRAFT';
+      };
+
+      // Helper: infer which dept an item belongs to from its business_type or category_name
+      const inferDept = (it: ReorderItem): string => {
+        if ((it as any).business_type) return (it as any).business_type;
+        const cat = ((it as any).category_name || '').toLowerCase();
+        if (cat.includes('bigas') || cat.includes('rice')) return 'rice';
+        if (cat.includes('gulay') || cat.includes('veg')) return 'vegetables';
+        if (cat.includes('bbq') || cat.includes('inihaw') || cat.includes('barbeque') ||
+            cat.includes('pork') || cat.includes('chicken')) return 'barbeque';
+        return 'groceries';
+      };
+
+      // If ANY dept is still DRAFT, fetch prevMap for those depts
+      const hasAnyDraft = !existing.items.every(it => {
+        const dept = inferDept(it);
+        const st = getDeptLockStatus(dept);
+        return st === 'RECEIVED' || st === 'LOCKED' || st === 'ORDERED';
+      });
+      const prevMap = hasAnyDraft ? await getPrevStocksMap(orderDate) : {};
+
+      existing.items = existing.items.map(it => {
+        const norm = it.product_name.toLowerCase().trim();
+        const p = prodMap.get(it.product_id) || prodByName.get(norm);
+        const dept = inferDept(it);
+        const deptStatus = getDeptLockStatus(dept);
+        const isLocked = deptStatus === 'RECEIVED' || deptStatus === 'LOCKED' || deptStatus === 'ORDERED';
+
+        // For LOCKED departments: preserve all saved values — do NOT recalculate
+        if (isLocked) {
           return {
             ...it,
-            prev_stock: accuratePrev,
-            unsold_qty: accuratePrev,
-            suggested_qty: suggested,
+            category_id: it.category_id ?? p?.category_id ?? 1,
+            category_name: it.category_name ?? p?.category_name ?? 'Inihaw / BBQ',
+            item_type: it.item_type ?? p?.item_type ?? 'product',
+            business_type: it.business_type ?? (p as any)?.business_type,
+            unit: it.unit ?? p?.unit ?? (it.sell_by_weight ? 'kg' : (norm === 'suka' ? 'bottle' : 'sticks')),
+            sell_by_weight: it.sell_by_weight ?? p?.sell_by_weight ?? false,
+            current_stock: p?.current_stock ?? it.current_stock ?? 0,
+            min_stock_level: p?.low_stock_threshold ?? it.min_stock_level ?? 6,
+            // Keep prev_stock, order_qty, etc. exactly as locked
           };
-        });
-      }
+        }
+
+        // For DRAFT departments: dynamically refresh prev_stock from yesterday's closing
+        const accuratePrev = prevMap[norm] !== undefined ? prevMap[norm] : (it.prev_stock ?? 0);
+        let suggested = 0;
+        const isWeight = it.sell_by_weight ?? p?.sell_by_weight ?? false;
+        if (isWeight) {
+          suggested = Math.max(0, Number(((it.target_stock || 0) - (p?.current_stock ?? accuratePrev)).toFixed(2)));
+        } else if (p?.low_stock_threshold && (p.current_stock ?? 0) > p.low_stock_threshold) {
+          suggested = 0;
+        } else {
+          suggested = Math.max(0, (it.target_stock || 0) - accuratePrev);
+        }
+        return {
+          ...it,
+          category_id: it.category_id ?? p?.category_id ?? 1,
+          category_name: it.category_name ?? p?.category_name ?? 'Inihaw / BBQ',
+          item_type: it.item_type ?? p?.item_type ?? 'product',
+          business_type: it.business_type ?? (p as any)?.business_type,
+          unit: it.unit ?? p?.unit ?? (isWeight ? 'kg' : (norm === 'suka' ? 'bottle' : 'sticks')),
+          sell_by_weight: isWeight,
+          current_stock: p?.current_stock ?? it.current_stock ?? 0,
+          min_stock_level: p?.low_stock_threshold ?? it.min_stock_level ?? 6,
+          prev_stock: accuratePrev,
+          unsold_qty: accuratePrev,
+          suggested_qty: suggested,
+        };
+      });
 
       const userOrderItems = await getActiveOrderItems();
       if (userOrderItems.length > 0) {
@@ -319,7 +416,8 @@ export async function generateSuggestedReorder(
               product_id: -(existing.items.length + missing.length + 1),
               product_name: oi.name,
               sku: `OI-${oi.id.slice(0, 6).toUpperCase()}`,
-              category_name: supName,
+              category_id: 1,
+              category_name: 'Supplies',
               target_stock: targetStock,
               sold_qty: 0,
               unsold_qty: 0,
@@ -341,6 +439,7 @@ export async function generateSuggestedReorder(
           existing.total_cost = existing.items.reduce((s, it) => s + (Number(it.total_cost) || 0), 0);
         }
       }
+
       return normalizeSheetItems(existing);
     }
   }
@@ -351,36 +450,59 @@ export async function generateSuggestedReorder(
   // 3. Build items from Master Products list (Centralized Source of Truth)
   const allProducts = await getAllProducts();
   const savedTargets = getSavedTargetStocks();
-  const bbqItems: ReorderItem[] = [];
+  const reorderItems: ReorderItem[] = [];
 
-  const activeProducts = allProducts.filter(p => p.is_active);
+  const activeProducts = allProducts.filter(
+    p => p.is_active && p.id !== 999 && p.item_type !== 'service'
+  );
 
   if (activeProducts.length > 0) {
     for (const p of activeProducts) {
       const normName = p.name.toLowerCase().trim();
-      const targetStock = p.target_stock ?? savedTargets[normName] ?? 20;
-      const prevStock = prevMap[normName] ?? 0;
-      const suggestedQty = Math.max(0, targetStock - prevStock);
+      const isWeight = p.sell_by_weight ?? (p.unit === 'kg' || normName.includes('gulay') || normName.includes('bigas'));
+      const isRetail = !isWeight && (p.category_id !== 1 && !(p.category_name || '').toLowerCase().includes('inihaw') && !(p.category_name || '').toLowerCase().includes('bbq'));
+
+      const defaultTarget = isWeight ? 5 : (isRetail ? (p.target_stock || 24) : 20);
+      const targetStock = p.target_stock ?? savedTargets[normName] ?? defaultTarget;
+      const prevStock = prevMap[normName] ?? (p.current_stock ?? 0);
+
+      let suggestedQty = 0;
+      if (isWeight) {
+        suggestedQty = Math.max(0, Number((targetStock - (p.current_stock ?? prevStock)).toFixed(2)));
+      } else if (isRetail) {
+        const threshold = p.low_stock_threshold || 6;
+        suggestedQty = (p.current_stock ?? 0) <= threshold ? Math.max(0, targetStock - (p.current_stock ?? 0)) : 0;
+      } else {
+        // Inihaw / BBQ
+        suggestedQty = Math.max(0, targetStock - prevStock);
+      }
+
       const resellerPrice = p.cost_price && p.cost_price > 0 ? Number(p.cost_price) : (DEFAULT_RESELLER_PRICES[normName] ?? 15);
       const isHotdog = normName === 'hotdog';
       const supplierName = p.supplier_name || (isHotdog ? 'Meycauayan Public Market' : 'BBQ-SUPPLIER(Saog)');
 
-      bbqItems.push({
+      reorderItems.push({
         product_id: p.id,
         product_name: p.name,
         sku: p.sku,
-        category_name: p.category_name || supplierName,
+        item_type: p.item_type || 'product',
+        business_type: p.business_type || 'groceries',
+        category_id: p.category_id ?? 1,
+        category_name: p.category_name || 'Inihaw / BBQ',
         target_stock: targetStock,
         sold_qty: 0,
         unsold_qty: prevStock,
         prev_stock: prevStock,
+        current_stock: p.current_stock ?? 0,
+        min_stock_level: p.low_stock_threshold ?? 6,
+        sell_by_weight: isWeight,
         supplier_id: p.supplier_id ?? '',
         supplier_name: supplierName,
         suggested_qty: suggestedQty,
         order_qty: 0,
         reseller_price: resellerPrice,
         total_cost: 0,
-        unit: p.unit || (normName === 'suka' ? 'bottle' : 'sticks'),
+        unit: p.unit || (isWeight ? 'kg' : (normName === 'suka' ? 'bottle' : 'sticks')),
       });
     }
   } else {
@@ -392,10 +514,11 @@ export async function generateSuggestedReorder(
       const prevStock = prevMap[normName] ?? 0;
       const suggestedQty = Math.max(0, targetStock - prevStock);
 
-      bbqItems.push({
-        product_id: -(bbqItems.length + 1),
+      reorderItems.push({
+        product_id: -(reorderItems.length + 1),
         product_name: oi.name,
         sku: `OI-${oi.id.slice(0, 6).toUpperCase()}`,
+        category_id: 1,
         category_name: oi.supplier_name || 'Supplier',
         target_stock: targetStock,
         sold_qty: 0,
@@ -413,8 +536,8 @@ export async function generateSuggestedReorder(
     }
   }
 
-  const totalQty = bbqItems.reduce((sum, it) => sum + (Number(it.order_qty) || 0), 0);
-  const totalCost = bbqItems.reduce((sum, it) => sum + (Number(it.total_cost) || 0), 0);
+  const totalQty = reorderItems.reduce((sum, it) => sum + (Number(it.order_qty) || 0), 0);
+  const totalCost = reorderItems.reduce((sum, it) => sum + (Number(it.total_cost) || 0), 0);
 
   const now = new Date().toISOString();
   return normalizeSheetItems({
@@ -423,7 +546,7 @@ export async function generateSuggestedReorder(
     based_on_date: basedOnDate,
     status: 'DRAFT',
     supplier_name: 'BBQ-SUPPLIER(Saog)',
-    items: bbqItems,
+    items: reorderItems,
     total_quantity: totalQty,
     total_cost: totalCost,
     created_at: now,

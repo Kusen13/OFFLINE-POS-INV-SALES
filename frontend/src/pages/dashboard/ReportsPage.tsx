@@ -4,9 +4,15 @@ import { fetchProfitReport, fetchExpenses } from '../../api/endpoints';
 import { getAllDailyClosings } from '../../db/closingRepository';
 import { getAllExpenses } from '../../db/expenseRepository';
 import { getAllReorderSheets } from '../../db/reorderRepository';
+import { getAllProducts, getAllCategories } from '../../db/productRepository';
+import { getAllSales } from '../../db/salesRepository';
+import { getCategoryIcon, type BusinessType, type BusinessDepartment } from '../../types/product';
+import { getAllBusinessDepartments } from '../../utils/businessStorage';
 import type { Expense } from '../../types/inventory';
 import type { DailyClosing } from '../../types/closing';
 import type { ReorderSheet } from '../../types/reorder';
+import type { Product, Category } from '../../types/product';
+import type { PendingSale } from '../../types/sale';
 
 export function ReportsPage() {
   const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -25,15 +31,29 @@ export function ReportsPage() {
   const [closings, setClosings] = useState<DailyClosing[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [reorders, setReorders] = useState<ReorderSheet[]>([]);
+  const [allProductsList, setAllProductsList] = useState<Product[]>([]);
+  const [allCategoriesList, setAllCategoriesList] = useState<Category[]>([]);
+  const [localSalesList, setLocalSalesList] = useState<PendingSale[]>([]);
   const [serverProfit, setServerProfit] = useState<{ total_revenue: number; total_cost: number; gross_profit: number } | null>(null);
 
   // Responsive & View States
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
-  const [activeTab, setActiveTab] = useState<'daily' | 'expenses'>('daily');
+  const [activeTab, setActiveTab] = useState<'daily' | 'categories' | 'expenses'>('daily');
   const [daySubView, setDaySubView] = useState<'products' | 'calendar'>('products');
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [filterActiveOnly, setFilterActiveOnly] = useState<boolean>(false);
+
+  // Business Department & Category Filter State
+  const [departments, setDepartments] = useState<BusinessDepartment[]>(() => getAllBusinessDepartments());
+  const [selectedDept, setSelectedDept] = useState<BusinessType>('barbeque');
+  const [selectedCategory, setSelectedCategory] = useState<number | 'all'>('all');
+
+  useEffect(() => {
+    const handleDeptUpdated = () => setDepartments(getAllBusinessDepartments());
+    window.addEventListener('pos_departments_updated', handleDeptUpdated);
+    return () => window.removeEventListener('pos_departments_updated', handleDeptUpdated);
+  }, []);
 
   const loadReportData = useCallback(async (monthStr: string) => {
     setLoading(true);
@@ -70,6 +90,20 @@ export function ReportsPage() {
       const allReorders = await getAllReorderSheets();
       const monthReorders = allReorders.filter(r => r.order_date.startsWith(monthStr));
       setReorders(monthReorders);
+
+      // 5. Load products, categories, and local sales for category analytics
+      try {
+        const [prods, cats, sales] = await Promise.all([
+          getAllProducts(),
+          getAllCategories(),
+          getAllSales(),
+        ]);
+        setAllProductsList(prods);
+        setAllCategoriesList(cats);
+        setLocalSalesList(sales);
+      } catch (localErr) {
+        console.error('Failed to load local offline sales/products', localErr);
+      }
     } catch (err) {
       console.error('Failed to load reports data', err);
     } finally {
@@ -121,6 +155,14 @@ export function ReportsPage() {
       expensesByDate.set(e.expense_date, (expensesByDate.get(e.expense_date) || 0) + Number(e.amount));
     });
 
+    const salesByDate = new Map<string, number>();
+    localSalesList.forEach(s => {
+      const d = s.sold_at?.slice(0, 10);
+      if (d) {
+        salesByDate.set(d, (salesByDate.get(d) || 0) + Number(s.total_amount || 0));
+      }
+    });
+
     for (let d = 1; d <= totalDaysInMonth; d++) {
       const dateStr = `${selectedMonth}-${String(d).padStart(2, '0')}`;
       const closing = closingsByDate.get(dateStr);
@@ -144,9 +186,10 @@ export function ReportsPage() {
         inOrderCost = reorder.total_cost;
       }
 
-      const sales = closing ? closing.total_revenue : 0;
+      const fallbackSales = salesByDate.get(dateStr) || 0;
+      const sales = closing ? closing.total_revenue : fallbackSales;
       const cogs = closing ? closing.total_cogs : 0;
-      const grossProfit = closing ? closing.total_gross_profit : 0;
+      const grossProfit = closing ? closing.total_gross_profit : sales;
       const spoilageLoss = closing ? closing.total_spoilage_loss : 0;
       const netIncome = grossProfit - (dayOpex + spoilageLoss);
       const cashOnHand = closing ? (closing.actual_cash_on_hand ?? closing.expected_cash_on_hand ?? 0) : 0;
@@ -170,7 +213,7 @@ export function ReportsPage() {
     }
 
     return days;
-  }, [selectedMonth, closings, reorders, expenses]);
+  }, [selectedMonth, closings, reorders, expenses, localSalesList]);
 
   // Grand totals for the month
   const monthSummary = useMemo(() => {
@@ -216,6 +259,36 @@ export function ReportsPage() {
     return closings.find(c => c.date === selectedDate) || null;
   }, [closings, selectedDate]);
 
+  // Department-aware available categories
+  const displayCategories = useMemo(() => {
+    return allCategoriesList.filter(c => (c.business_type || 'groceries') === selectedDept);
+  }, [allCategoriesList, selectedDept]);
+
+  // Product metadata map (business_type, category_id)
+  const prodInfoMap = useMemo(() => {
+    const map = new Map<number, { business_type: BusinessType; category_id?: number }>();
+    allProductsList.forEach(p => {
+      const cat = allCategoriesList.find(c => c.id === p.category_id);
+      map.set(p.id, {
+        business_type: p.business_type || cat?.business_type || 'groceries',
+        category_id: p.category_id,
+      });
+    });
+    return map;
+  }, [allProductsList]);
+
+  // Department and Category filtered closing items for Day view
+  const displayedDayClosingItems = useMemo(() => {
+    if (!selectedDayClosing?.items) return [];
+    return selectedDayClosing.items.filter(it => {
+      const info = prodInfoMap.get(it.product_id);
+      const bType = info?.business_type || 'groceries';
+      if (bType !== selectedDept) return false;
+      if (selectedCategory !== 'all' && info?.category_id !== selectedCategory) return false;
+      return true;
+    });
+  }, [selectedDayClosing, prodInfoMap, selectedDept, selectedCategory]);
+
   // Active Summary: Displays either Day totals or Month totals based on filterType
   const activeSummary = useMemo(() => {
     if (filterType === 'day') {
@@ -233,24 +306,30 @@ export function ReportsPage() {
           margin: '0.0',
         };
       }
-      const sales = selectedDayMetrics.sales;
-      const net = selectedDayMetrics.netIncome;
+      const sales = displayedDayClosingItems.reduce((s, it) => s + it.actual_revenue, 0);
+      const inOrder = displayedDayClosingItems.reduce((s, it) => s + (it.received_qty * it.unit_cost), 0);
+      const cogs = displayedDayClosingItems.reduce((s, it) => s + it.cogs, 0);
+      const unsoldCost = displayedDayClosingItems.reduce((s, it) => s + (it.unsold_qty * it.unit_cost), 0);
+      const unsoldQty = displayedDayClosingItems.reduce((s, it) => s + it.unsold_qty, 0);
+      const gross = displayedDayClosingItems.reduce((s, it) => s + it.gross_profit, 0);
+      const spoilage = displayedDayClosingItems.reduce((s, it) => s + it.spoilage_loss, 0);
+      const net = gross - spoilage;
       const margin = sales > 0 ? (net / sales) * 100 : 0;
       return {
         totalSales: sales,
-        totalInOrder: selectedDayMetrics.inOrderCost,
-        totalCogs: selectedDayMetrics.cogs,
-        totalUnsoldCost: selectedDayMetrics.unsoldCostValue,
-        totalUnsoldQty: selectedDayMetrics.unsoldQty,
-        totalGrossProfit: selectedDayMetrics.grossProfit,
-        totalOpex: selectedDayMetrics.opex,
-        totalSpoilage: selectedDayMetrics.spoilageLoss,
+        totalInOrder: inOrder,
+        totalCogs: cogs,
+        totalUnsoldCost: unsoldCost,
+        totalUnsoldQty: unsoldQty,
+        totalGrossProfit: gross,
+        totalOpex: 0,
+        totalSpoilage: spoilage,
         totalNetIncome: net,
         margin: margin.toFixed(1),
       };
     }
     return monthSummary;
-  }, [filterType, selectedDayMetrics, monthSummary]);
+  }, [filterType, selectedDayMetrics, monthSummary, selectedDept, selectedCategory, displayedDayClosingItems]);
 
   // Filtered & Paginated Days for monthly view
   const displayedDays = useMemo(() => {
@@ -277,6 +356,64 @@ export function ReportsPage() {
       .map(([category, amount]) => ({ category, amount }))
       .sort((a, b) => b.amount - a.amount);
   }, [expenses, filterType, selectedDate]);
+
+  // Group sales by product category
+  const salesByCategory = useMemo(() => {
+    const targetSales = localSalesList.filter(s => {
+      const d = s.sold_at?.slice(0, 10) || '';
+      return filterType === 'day' ? d === selectedDate : d.startsWith(selectedMonth);
+    });
+
+    const catNameMap = new Map(allCategoriesList.map(c => [c.id, c.name]));
+    const prodCatMap = new Map<number, string>();
+    allProductsList.forEach(p => {
+      const name = (p.category_id && catNameMap.get(p.category_id)) || p.category_name || 'Iba pa';
+      prodCatMap.set(p.id, name);
+    });
+
+    const map = new Map<string, {
+      category: string;
+      revenue: number;
+      cost: number;
+      itemsCount: number;
+    }>();
+
+    targetSales.forEach(s => {
+      s.items?.forEach(it => {
+        const prod = prodInfoMap.get(it.product_id);
+        const bType = prod?.business_type || 'groceries';
+        if (bType !== selectedDept) return;
+        if (selectedCategory !== 'all' && prod?.category_id !== selectedCategory) return;
+
+        const cat = prodCatMap.get(it.product_id) || 'Iba pa';
+        const lineRev = Number(it.line_total || 0);
+        const lineCost = Number(it.unit_cost || 0) * Number(it.quantity || 0);
+        const qty = Number(it.quantity || 0);
+
+        const curr = map.get(cat) || { category: cat, revenue: 0, cost: 0, itemsCount: 0 };
+        curr.revenue += lineRev;
+        curr.cost += lineCost;
+        curr.itemsCount += qty;
+        map.set(cat, curr);
+      });
+    });
+
+    const totalRev = Array.from(map.values()).reduce((sum, c) => sum + c.revenue, 0);
+
+    return Array.from(map.values())
+      .map(c => {
+        const grossProfit = c.revenue - c.cost;
+        const marginPct = c.revenue > 0 ? (grossProfit / c.revenue) * 100 : 0;
+        const revPct = totalRev > 0 ? (c.revenue / totalRev) * 100 : 0;
+        return {
+          ...c,
+          grossProfit,
+          marginPct: marginPct.toFixed(1),
+          revPct: revPct.toFixed(1),
+        };
+      })
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [localSalesList, filterType, selectedDate, selectedMonth, allProductsList, allCategoriesList, prodInfoMap, selectedDept, selectedCategory]);
 
   const handlePrint = () => {
     window.print();
@@ -371,6 +508,17 @@ export function ReportsPage() {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col space-y-2 sm:space-y-2.5 animate-fade-in pb-16 lg:pb-0 w-full overflow-hidden">
+
+      {/* FIX #4: Offline disclaimer — warns user that data may be incomplete when server is unreachable */}
+      {!serverProfit && !loading && (
+        <div className="flex items-center gap-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex-shrink-0">
+          <span className="shrink-0">⚠️</span>
+          <span>
+            <strong>Offline Mode:</strong> Ang datos ay batay sa lokal na talaan lamang. Maaaring hindi kumpleto ang monthly summary — i-sync muna para makita ang pinakabagong ulat.
+          </span>
+        </div>
+      )}
+
       {/* Header Bar with Date Selection Tools */}
       <div className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
@@ -394,9 +542,10 @@ export function ReportsPage() {
 
         {/* Date Filter Selection Controls */}
         <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap shrink-0">
-          {/* Quick Date Pills: Ngayon, Kahapon, Buwanan */}
+          {/* Quick Date Pills: Today, Yesterday, Monthly */}
           <div className="flex items-center bg-surface-900/90 p-0.5 rounded-lg border border-surface-700/60 shadow-xs">
             <button
+              type="button"
               onClick={handleSelectToday}
               className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                 filterType === 'day' && selectedDate === todayStr
@@ -404,9 +553,10 @@ export function ReportsPage() {
                   : 'text-surface-400 hover:text-surface-200'
               }`}
             >
-              Ngayon
+              Today
             </button>
             <button
+              type="button"
               onClick={handleSelectYesterday}
               className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                 filterType === 'day' && selectedDate === yesterdayStr
@@ -414,9 +564,10 @@ export function ReportsPage() {
                   : 'text-surface-400 hover:text-surface-200'
               }`}
             >
-              Kahapon
+              Yesterday
             </button>
             <button
+              type="button"
               onClick={handleSelectMonthMode}
               className={`px-2 py-1 text-[11px] font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                 filterType === 'month'
@@ -424,7 +575,7 @@ export function ReportsPage() {
                   : 'text-surface-400 hover:text-surface-200'
               }`}
             >
-              Buong Buwan
+              Full Month
             </button>
           </div>
 
@@ -462,6 +613,50 @@ export function ReportsPage() {
         </div>
       ) : (
         <>
+          {/* Business Department Filter Ribbon & Category Selector */}
+          <div className="flex-shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 p-1.5 rounded-xl bg-surface-900 border border-surface-700/60 shadow-xs">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-0.5 sm:pb-0">
+              {departments.map(dept => {
+                const isSelected = selectedDept === dept.id;
+                return (
+                  <button
+                    key={dept.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedDept(dept.id);
+                      setSelectedCategory('all');
+                    }}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold text-xs whitespace-nowrap transition-all cursor-pointer shadow-xs ${
+                      isSelected
+                        ? 'bg-primary-600 text-white shadow-primary-600/30 ring-1 ring-primary-500 scale-[1.02]'
+                        : 'bg-surface-800 hover:bg-surface-700 text-surface-300 hover:text-surface-100 border border-surface-700/60'
+                    }`}
+                  >
+                    <span>{dept.icon}</span>
+                    <span>{dept.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Category Dropdown Filter */}
+            <div className="flex items-center gap-1 shrink-0">
+              <span className="text-[11px] text-surface-400 font-semibold hidden md:inline">Kategorya:</span>
+              <select
+                value={selectedCategory}
+                onChange={e => setSelectedCategory(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                className="px-2 py-1 rounded-lg bg-surface-800 border border-surface-700/70 text-surface-200 text-xs font-semibold focus:outline-none focus:border-primary-500 cursor-pointer shadow-xs max-w-[170px] sm:max-w-[200px] truncate"
+              >
+                {displayCategories.length > 1 && <option value="all">🏷️ Lahat ng {departments.find(d => d.id === selectedDept)?.label || ''} Kategorya</option>}
+                {displayCategories.map(cat => (
+                  <option key={cat.id} value={cat.id}>
+                    {getCategoryIcon(cat.name)} {cat.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* Summary KPI Cards - High Information Density (Mobile & Desktop) */}
           <div className="flex-shrink-0">
             {/* Mobile View: 2 Hero Cards + 6 Compact Badges */}
@@ -471,7 +666,7 @@ export function ReportsPage() {
                   <div className="flex items-center justify-between text-[10px] text-surface-400">
                     <span className="font-bold uppercase tracking-wider">Gross Sales</span>
                     <span className="text-[9px] text-surface-500">
-                      {filterType === 'day' ? 'Araw' : 'Buwan'}
+                      {filterType === 'day' ? 'Benta' : 'Buwan'}
                     </span>
                   </div>
                   <p className="text-sm font-extrabold text-surface-100 mt-0.5 font-mono">
@@ -480,7 +675,7 @@ export function ReportsPage() {
                 </div>
                 <div className="p-2 rounded-lg bg-primary-950/60 border border-primary-500/40 shadow-xs">
                   <div className="flex items-center justify-between text-[10px] text-primary-300">
-                    <span className="font-bold uppercase tracking-wider">Net Income</span>
+                    <span className="font-bold uppercase tracking-wider">Net Profit</span>
                     <span className="text-[9px] font-bold bg-primary-900/60 px-1 rounded border border-primary-600/30">
                       {activeSummary.margin}%
                     </span>
@@ -494,15 +689,15 @@ export function ReportsPage() {
               {/* 6 Micro Metrics in 2 rows of 3 */}
               <div className="grid grid-cols-3 gap-1">
                 <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
-                  <span className="text-[8.5px] font-semibold text-indigo-400 block truncate">📦 In-Order Bili</span>
+                  <span className="text-[8.5px] font-semibold text-indigo-400 block truncate">📦 Purchases</span>
                   <p className="text-[11px] font-bold text-indigo-300 font-mono mt-0.5 truncate">{formatCurrency(activeSummary.totalInOrder)}</p>
                 </div>
                 <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
-                  <span className="text-[8.5px] font-semibold text-amber-400 block truncate">🏷️ COGS (Benta)</span>
+                  <span className="text-[8.5px] font-semibold text-amber-400 block truncate">🏷️ COGS</span>
                   <p className="text-[11px] font-bold text-amber-300 font-mono mt-0.5 truncate">{formatCurrency(activeSummary.totalCogs)}</p>
                 </div>
                 <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
-                  <span className="text-[8.5px] font-semibold text-sky-400 block truncate">🧊 Natira (Asset)</span>
+                  <span className="text-[8.5px] font-semibold text-sky-400 block truncate">🧊 Ending Stock</span>
                   <p className="text-[11px] font-bold text-sky-300 font-mono mt-0.5 truncate">{formatCurrency(activeSummary.totalUnsoldCost)}</p>
                 </div>
                 <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
@@ -514,7 +709,7 @@ export function ReportsPage() {
                   <p className="text-[11px] font-bold text-rose-300 font-mono mt-0.5 truncate">{formatCurrency(activeSummary.totalOpex)}</p>
                 </div>
                 <div className="p-1 rounded bg-surface-850/90 border border-surface-700/50 text-center">
-                  <span className="text-[8.5px] font-semibold text-danger-400 block truncate">🔥 Spoilage Lugi</span>
+                  <span className="text-[8.5px] font-semibold text-danger-400 block truncate">🔥 Spoilage</span>
                   <p className="text-[11px] font-bold text-danger-300 font-mono mt-0.5 truncate">{formatCurrency(activeSummary.totalSpoilage)}</p>
                 </div>
               </div>
@@ -524,20 +719,26 @@ export function ReportsPage() {
             <div className="hidden sm:grid sm:grid-cols-4 lg:grid-cols-8 gap-1.5 lg:gap-2">
               {/* 1. Gross Sales */}
               <div className="p-2 rounded-xl bg-surface-850 border border-surface-700/60 shadow-xs flex flex-col justify-between">
-                <span className="text-[10px] font-semibold text-surface-400 uppercase tracking-tight">Sales Revenue</span>
+                <div>
+                  <span className="text-[10px] font-bold text-surface-400 uppercase tracking-tight block">Gross Sales</span>
+                  <span className="text-[9px] text-surface-500 font-medium block -mt-0.5">Benta</span>
+                </div>
                 <p className="text-sm lg:text-base font-extrabold text-surface-100 font-mono mt-0.5">
                   {formatCurrency(activeSummary.totalSales)}
                 </p>
                 <span className="text-[9.5px] text-surface-500 truncate">
-                  {filterType === 'day' ? `Benta noong ${selectedDate.slice(5)}` : 'Kabuuang benta'}
+                  {filterType === 'day' ? `Petsa: ${selectedDate.slice(5)}` : 'Kabuuang benta'}
                 </span>
               </div>
 
               {/* 2. Total In-Order / Purchases */}
               <div className="p-2 rounded-xl bg-indigo-950/30 border border-indigo-500/30 shadow-xs flex flex-col justify-between">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-semibold text-indigo-300 uppercase tracking-tight">In-Order Bili</span>
-                  <span className="text-[9px] text-indigo-400">📦 Deliver</span>
+                  <div>
+                    <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-tight block">Purchases</span>
+                    <span className="text-[9px] text-indigo-400/80 font-medium block -mt-0.5">In-Order Bili</span>
+                  </div>
+                  <span className="text-[9px] text-indigo-400">📦</span>
                 </div>
                 <p className="text-sm lg:text-base font-extrabold text-indigo-300 font-mono mt-0.5">
                   {formatCurrency(activeSummary.totalInOrder)}
@@ -547,7 +748,10 @@ export function ReportsPage() {
 
               {/* 3. COGS */}
               <div className="p-2 rounded-xl bg-surface-850 border border-surface-700/60 shadow-xs flex flex-col justify-between">
-                <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-tight">COGS (Puhunan)</span>
+                <div>
+                  <span className="text-[10px] font-bold text-amber-400 uppercase tracking-tight block">COGS</span>
+                  <span className="text-[9px] text-surface-500 font-medium block -mt-0.5">Puhunan sa Nabenta</span>
+                </div>
                 <p className="text-sm lg:text-base font-extrabold text-amber-300 font-mono mt-0.5">
                   {formatCurrency(activeSummary.totalCogs)}
                 </p>
@@ -557,7 +761,10 @@ export function ReportsPage() {
               {/* 4. Unsold Value */}
               <div className="p-2 rounded-xl bg-sky-950/30 border border-sky-500/30 shadow-xs flex flex-col justify-between">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-semibold text-sky-300 uppercase tracking-tight">Natirang Stock</span>
+                  <div>
+                    <span className="text-[10px] font-bold text-sky-300 uppercase tracking-tight block">Ending Stock</span>
+                    <span className="text-[9px] text-sky-400/80 font-medium block -mt-0.5">Natirang Paninda</span>
+                  </div>
                   <span className="text-[9px] text-sky-400 font-bold bg-sky-900/40 px-1 rounded">{activeSummary.totalUnsoldQty} pcs</span>
                 </div>
                 <p className="text-sm lg:text-base font-extrabold text-sky-300 font-mono mt-0.5">
@@ -568,7 +775,10 @@ export function ReportsPage() {
 
               {/* 5. Gross Profit */}
               <div className="p-2 rounded-xl bg-surface-850 border border-surface-700/60 shadow-xs flex flex-col justify-between">
-                <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-tight">Gross Profit</span>
+                <div>
+                  <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-tight block">Gross Profit</span>
+                  <span className="text-[9px] text-surface-500 font-medium block -mt-0.5">Kabuuang Tubo</span>
+                </div>
                 <p className="text-sm lg:text-base font-extrabold text-emerald-300 font-mono mt-0.5">
                   {formatCurrency(activeSummary.totalGrossProfit)}
                 </p>
@@ -577,7 +787,10 @@ export function ReportsPage() {
 
               {/* 6. OPEX */}
               <div className="p-2 rounded-xl bg-surface-850 border border-surface-700/60 shadow-xs flex flex-col justify-between">
-                <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-tight">OPEX Gastos</span>
+                <div>
+                  <span className="text-[10px] font-bold text-rose-400 uppercase tracking-tight block">Operating Exp.</span>
+                  <span className="text-[9px] text-surface-500 font-medium block -mt-0.5">OPEX Gastos</span>
+                </div>
                 <p className="text-sm lg:text-base font-extrabold text-rose-300 font-mono mt-0.5">
                   {formatCurrency(activeSummary.totalOpex)}
                 </p>
@@ -586,7 +799,10 @@ export function ReportsPage() {
 
               {/* 7. Spoilage */}
               <div className="p-2 rounded-xl bg-surface-850 border border-surface-700/60 shadow-xs flex flex-col justify-between">
-                <span className="text-[10px] font-semibold text-danger-400 uppercase tracking-tight">Spoilage Lugi</span>
+                <div>
+                  <span className="text-[10px] font-bold text-danger-400 uppercase tracking-tight block">Spoilage & Loss</span>
+                  <span className="text-[9px] text-surface-500 font-medium block -mt-0.5">Tapon at Lugi</span>
+                </div>
                 <p className="text-sm lg:text-base font-extrabold text-danger-300 font-mono mt-0.5">
                   {formatCurrency(activeSummary.totalSpoilage)}
                 </p>
@@ -596,7 +812,10 @@ export function ReportsPage() {
               {/* 8. Net Income */}
               <div className="p-2 rounded-xl bg-primary-950/50 border border-primary-500/40 shadow-xs flex flex-col justify-between">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-primary-300 uppercase tracking-tight">Net Income</span>
+                  <div>
+                    <span className="text-[10px] font-bold text-primary-300 uppercase tracking-tight block">Net Profit</span>
+                    <span className="text-[9px] text-primary-400/80 font-medium block -mt-0.5">Malinis na Kita</span>
+                  </div>
                   <span className="text-[9px] font-bold bg-primary-900/60 text-primary-300 px-1 rounded border border-primary-600/30">
                     {activeSummary.margin}%
                   </span>
@@ -624,6 +843,19 @@ export function ReportsPage() {
                 <span>📅</span>{' '}
                 <span>
                   {filterType === 'day' ? `Ulat ng Araw (${selectedDate.slice(5)})` : 'Araw-Araw (P&L)'}
+                </span>
+              </button>
+              <button
+                onClick={() => setActiveTab('categories')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'categories'
+                    ? 'bg-primary-600 text-white shadow-xs'
+                    : 'text-surface-400 hover:text-surface-200'
+                }`}
+              >
+                <span>🏷️</span>{' '}
+                <span>
+                  Kada Kategorya ({salesByCategory.length})
                 </span>
               </button>
               <button
@@ -719,7 +951,7 @@ export function ReportsPage() {
                               : 'text-surface-400 hover:text-surface-200'
                           }`}
                         >
-                          🥩 Bawat Produkto ({selectedDayClosing.items.length})
+                          🥩 Bawat Produkto ({displayedDayClosingItems.length})
                         </button>
                         <button
                           onClick={() => setDaySubView('calendar')}
@@ -744,13 +976,13 @@ export function ReportsPage() {
               )}
 
               {/* View 1: Day Detailed Product Breakdown (If Day Filter is active & subview is 'products') */}
-              {filterType === 'day' && daySubView === 'products' && selectedDayClosing?.items && selectedDayClosing.items.length > 0 ? (
+              {filterType === 'day' && daySubView === 'products' && selectedDayClosing?.items && displayedDayClosingItems.length > 0 ? (
                 <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                  <div className="flex-1 min-h-0 overflow-y-auto">
+                  <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
                     {viewMode === 'cards' ? (
                       /* Mobile Cards for Day Product Breakdown */
                       <div className="p-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                        {selectedDayClosing.items.map(it => (
+                        {displayedDayClosingItems.map(it => (
                           <div
                             key={it.product_id}
                             className="p-2.5 rounded-xl border border-surface-700/60 bg-surface-900/80 shadow-xs flex flex-col justify-between"
@@ -802,37 +1034,37 @@ export function ReportsPage() {
                       </div>
                     ) : (
                       /* Table for Day Product Breakdown - Fixed widths, ZERO horizontal overflow */
-                      <table className="w-full text-left table-fixed border-collapse">
+                      <table className="w-full text-left min-w-[720px] border-collapse whitespace-nowrap">
                         <thead className="sticky top-0 bg-surface-900 border-b border-surface-700/70 z-10 shadow-xs">
                           <tr>
-                            <th className="w-[20%] px-2 py-1.5 text-[10.5px] font-bold text-surface-400 uppercase tracking-tight">
-                              Produkto
+                            <th className="px-3 py-2 text-xs font-bold text-surface-400 uppercase tracking-tight">
+                              Product Name
                             </th>
-                            <th className="w-[12%] px-1.5 py-1.5 text-[10.5px] font-bold text-indigo-300 uppercase tracking-tight text-right">
-                              In-Order (Bili)
+                            <th className="px-2 py-2 text-xs font-bold text-indigo-300 uppercase tracking-tight text-right">
+                              Ordered
                             </th>
-                            <th className="w-[10%] px-1.5 py-1.5 text-[10.5px] font-bold text-surface-300 uppercase tracking-tight text-right">
-                              Nabenta
+                            <th className="px-2 py-2 text-xs font-bold text-surface-300 uppercase tracking-tight text-right">
+                              Sold
                             </th>
-                            <th className="w-[13%] px-1.5 py-1.5 text-[10.5px] font-bold text-sky-300 uppercase tracking-tight text-right">
-                              Natira (Tray)
+                            <th className="px-2 py-2 text-xs font-bold text-sky-300 uppercase tracking-tight text-right">
+                              Unsold
                             </th>
-                            <th className="w-[12%] px-1.5 py-1.5 text-[10.5px] font-bold text-surface-100 uppercase tracking-tight text-right">
-                              Benta (Sales)
+                            <th className="px-2 py-2 text-xs font-bold text-surface-100 uppercase tracking-tight text-right">
+                              Sales
                             </th>
-                            <th className="w-[11%] px-1.5 py-1.5 text-[10.5px] font-bold text-amber-400 uppercase tracking-tight text-right">
+                            <th className="px-2 py-2 text-xs font-bold text-amber-400 uppercase tracking-tight text-right">
                               COGS
                             </th>
-                            <th className="w-[12%] px-1.5 py-1.5 text-[10.5px] font-bold text-emerald-400 uppercase tracking-tight text-right">
-                              Tubo (GP)
+                            <th className="px-2 py-2 text-xs font-bold text-emerald-400 uppercase tracking-tight text-right">
+                              Gross Profit
                             </th>
-                            <th className="w-[10%] px-2 py-1.5 text-[10.5px] font-bold text-danger-400 uppercase tracking-tight text-right hidden sm:table-cell">
+                            <th className="px-2 py-2 text-xs font-bold text-danger-400 uppercase tracking-tight text-right hidden sm:table-cell">
                               Spoilage
                             </th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-surface-700/30 font-mono text-[11px] sm:text-xs">
-                          {selectedDayClosing.items.map(it => (
+                          {displayedDayClosingItems.map(it => (
                             <tr key={it.product_id} className="hover:bg-surface-700/20 transition-colors">
                               <td className="px-2 py-1.5 font-sans font-medium text-surface-100 truncate">
                                 <span>{it.product_name}</span>{' '}
@@ -906,7 +1138,7 @@ export function ReportsPage() {
               ) : (
                 /* View 2: Monthly Calendar Statement (1 to 31) - Full Width */
                 <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                  <div className="flex-1 min-h-0 overflow-y-auto">
+                  <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto">
                     {viewMode === 'cards' ? (
                       /* Cards View - Zero Horizontal Scroll, 100% Space Efficient on Mobile/Tablet/Desktop */
                       <div className="p-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
@@ -1021,37 +1253,37 @@ export function ReportsPage() {
                       </div>
                     ) : (
                       /* High-Density Full-Width Table - ZERO Horizontal Scrollbar */
-                      <table className="w-full text-left table-fixed border-collapse">
+                      <table className="w-full text-left min-w-[760px] border-collapse whitespace-nowrap">
                         <thead className="sticky top-0 bg-surface-900 border-b border-surface-700/70 z-10 shadow-xs">
                           <tr>
-                            <th className="w-[8%] px-2 py-1.5 text-[10.5px] font-bold text-surface-400 uppercase tracking-tight">
-                              Araw
+                            <th className="px-2.5 py-2 text-xs font-bold text-surface-400 uppercase tracking-tight">
+                              Date
                             </th>
-                            <th className="w-[10.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-surface-300 uppercase tracking-tight text-right">
-                              Sales (Benta)
+                            <th className="px-2 py-2 text-xs font-bold text-surface-300 uppercase tracking-tight text-right">
+                              Sales
                             </th>
-                            <th className="w-[10.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-indigo-300 uppercase tracking-tight text-right">
-                              In-Order (Bili)
+                            <th className="px-2 py-2 text-xs font-bold text-indigo-300 uppercase tracking-tight text-right">
+                              Orders
                             </th>
-                            <th className="w-[10.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-amber-400 uppercase tracking-tight text-right">
-                              COGS (Puhunan)
+                            <th className="px-2 py-2 text-xs font-bold text-amber-400 uppercase tracking-tight text-right">
+                              COGS
                             </th>
-                            <th className="w-[11.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-sky-300 uppercase tracking-tight text-right">
-                              Natira (Unsold)
+                            <th className="px-2 py-2 text-xs font-bold text-sky-300 uppercase tracking-tight text-right">
+                              Unsold
                             </th>
-                            <th className="w-[10.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-emerald-400 uppercase tracking-tight text-right">
+                            <th className="px-2 py-2 text-xs font-bold text-emerald-400 uppercase tracking-tight text-right">
                               Gross Profit
                             </th>
-                            <th className="w-[9.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-rose-400 uppercase tracking-tight text-right">
-                              OPEX Gastos
+                            <th className="px-2 py-2 text-xs font-bold text-rose-400 uppercase tracking-tight text-right">
+                              Expenses
                             </th>
-                            <th className="w-[8.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-danger-400 uppercase tracking-tight text-right hidden sm:table-cell">
+                            <th className="px-2 py-2 text-xs font-bold text-danger-400 uppercase tracking-tight text-right hidden sm:table-cell">
                               Spoilage
                             </th>
-                            <th className="w-[9.5%] px-1.5 py-1.5 text-[10.5px] font-bold text-sky-400 uppercase tracking-tight text-right hidden md:table-cell">
-                              Kaha On-Hand
+                            <th className="px-2 py-2 text-xs font-bold text-sky-400 uppercase tracking-tight text-right hidden md:table-cell">
+                              Cash Drawer
                             </th>
-                            <th className="w-[11%] px-2 py-1.5 text-[10.5px] font-bold text-surface-200 uppercase tracking-tight text-right">
+                            <th className="px-2.5 py-2 text-xs font-bold text-surface-200 uppercase tracking-tight text-right">
                               Net Income
                             </th>
                           </tr>
@@ -1223,6 +1455,70 @@ export function ReportsPage() {
                   </div>
                 </div>
               )}
+            </div>
+          ) : activeTab === 'categories' ? (
+            /* Benta at Tubo Ayon sa Kategorya Breakdown (100% Full-Width) */
+            <div className="flex-1 min-h-0 bg-surface-850 rounded-xl border border-surface-700/60 flex flex-col overflow-hidden shadow-xs p-3 sm:p-4">
+              <div className="flex items-center justify-between pb-2 border-b border-surface-700/60">
+                <div>
+                  <h3 className="text-sm font-bold text-surface-100 flex items-center gap-1.5">
+                    <span>🏷️</span> Benta at Tubo Ayon sa Kategorya
+                  </h3>
+                  <p className="text-xs text-surface-400 mt-0.5">
+                    {filterType === 'day' ? `Porsyento at kita kada kategorya para sa petsang ${selectedDate}` : `Porsyento at kita kada kategorya ngayong buwan (${selectedMonth})`}
+                  </p>
+                </div>
+                <span className="text-xs font-mono font-bold text-primary-400">
+                  {formatCurrency(activeSummary.totalSales)} kabuuang benta
+                </span>
+              </div>
+
+              <div className="flex-1 min-h-0 overflow-y-auto pt-3">
+                {salesByCategory.length === 0 ? (
+                  <div className="text-center py-12 text-surface-400 text-xs">
+                    Walang naitalang benta sa mga kategorya para sa panahong ito
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                    {salesByCategory.map(item => {
+                      const icon = getCategoryIcon(item.category);
+                      return (
+                        <div key={item.category} className="p-3 rounded-xl bg-surface-900/70 border border-surface-700/50 flex flex-col justify-between hover:border-primary-500/40 transition-colors">
+                          <div>
+                            <div className="flex items-center justify-between text-xs font-medium">
+                              <span className="text-surface-100 font-bold truncate flex items-center gap-1.5">
+                                <span>{icon}</span> <span>{item.category}</span>
+                              </span>
+                              <span className="font-extrabold text-primary-400 font-mono whitespace-nowrap">
+                                {formatCurrency(item.revenue)}
+                              </span>
+                            </div>
+                            
+                            <div className="w-full h-1.5 rounded-full bg-surface-700/60 mt-2 overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                                style={{ width: `${item.revPct}%` }}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-surface-400 mt-1 font-mono">
+                              <span>{item.itemsCount} nabenta</span>
+                              <span>{item.revPct}% ng kabuuan</span>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 pt-2 border-t border-surface-800/80 flex items-center justify-between text-[11px]">
+                            <span className="text-surface-400">Est. Tubo:</span>
+                            <div className="flex items-baseline gap-1.5 font-mono">
+                              <span className="font-bold text-emerald-400">{formatCurrency(item.grossProfit)}</span>
+                              <span className="text-[10px] text-surface-500 font-medium">({item.marginPct}%)</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             /* Gastos Ayon sa Kategorya Breakdown (100% Full-Width) */
